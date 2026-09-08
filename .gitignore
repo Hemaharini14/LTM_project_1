@@ -1,0 +1,25 @@
+# Python virtual environment
+flight/
+venv/
+env/
+
+# Python bytecode cache
+__pycache__/
+*.pyc
+
+# Raw & processed datasets (large; document sources in README instead)
+dataset/
+outputs/
+
+# Trained model artifacts (regenerate via src/train_delay_model_v2.py)
+models/artifacts/
+
+# SQLite database
+*.db
+
+# Environment variables / API keys — NEVER commit these
+.env
+
+# OS junk
+.DS_Store
+Thumbs.db

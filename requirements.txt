@@ -1,0 +1,12 @@
+openai
+langchain
+langgraph
+crewai
+pandas
+numpy
+scikit-learn
+matplotlib
+seaborn
+jupyter
+streamlit
+python-dotenv
