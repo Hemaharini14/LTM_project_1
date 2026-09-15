@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Admin · SmartRouteAI{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Admin panel</h1>
+  <p>Usage across all accounts, and the current LLM/agent status.</p>
+</section>
+
+<div class="stat-grid">
+  <div class="stat-tile"><span class="stat-number">{{ stats.user_count }}</span><span class="stat-tile-label">Users</span></div>
+  <div class="stat-tile"><span class="stat-number">{{ stats.flight_check_count }}</span><span class="stat-tile-label">Flight checks</span></div>
+  <div class="stat-tile"><span class="stat-number">{{ stats.budget_trip_count }}</span><span class="stat-tile-label">Budget trips</span></div>
+  <div class="stat-tile"><span class="stat-number">{{ stats.high_risk_count }}</span><span class="stat-tile-label">Moderate/High risk checks</span></div>
+</div>
+
+<div class="panel">
+  <h2>Agent / LLM status</h2>
+  {% if llm.configured %}
+  <p class="result-message safe">Configured — provider: {{ llm.provider }}. The recommendation narration and the sidebar chatbot are both using it.</p>
+  {% else %}
+  <p class="result-message warn">
+    Not configured{% if llm.key_present %} (key found but provider init failed — check LLM_PROVIDER matches your key){% else %} — no API key found{% endif %}.
+    Set <code>LLM_PROVIDER</code> (<code>openai</code> / <code>anthropic</code> / <code>grok</code>) and the matching API key in a <code>.env</code> file in the project root and restart the app — see <code>.env.example</code>.
+    Until then, recommendations use a deterministic template and the chatbot will say so.
+  </p>
+  {% endif %}
+</div>
+
+<div class="panel" style="margin-top: 24px;">
+  <h2>Users</h2>
+  <div class="admin-table-wrap">
+    <table class="admin-table">
+      <thead><tr><th>ID</th><th>Name</th><th>Email</th><th>Admin</th><th>Joined</th></tr></thead>
+      <tbody>
+        {% for u in users %}
+        <tr>
+          <td>{{ u.id }}</td>
+          <td>{{ u.name }}</td>
+          <td>{{ u.email }}</td>
+          <td><span class="admin-badge {{ 'yes' if u.is_admin else 'no' }}">{{ 'Admin' if u.is_admin else 'User' }}</span></td>
+          <td>{{ u.created_at[:10] }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel" style="margin-top: 24px;">
+  <h2>Recent flight checks (all users)</h2>
+  <div class="admin-table-wrap">
+    <table class="admin-table">
+      <thead><tr><th>User</th><th>Risk</th><th>Probability</th><th>When</th></tr></thead>
+      <tbody>
+        {% for c in checks %}
+        <tr>
+          <td>{{ c.user_name }} <span class="muted">({{ c.user_email }})</span></td>
+          <td><span class="badge risk-{{ (c.risk_label or '')|lower }}">{{ c.risk_label }}</span></td>
+          <td>{{ (c.delay_probability * 100) | round(1) if c.delay_probability is not none else '—' }}%</td>
+          <td>{{ c.created_at }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel" style="margin-top: 24px;">
+  <h2>Recent budget trips (all users)</h2>
+  <div class="admin-table-wrap">
+    <table class="admin-table">
+      <thead><tr><th>User</th><th>Route</th><th>Budget</th><th>Days</th><th>When</th></tr></thead>
+      <tbody>
+        {% for t in trips %}
+        <tr>
+          <td>{{ t.user_name }} <span class="muted">({{ t.user_email }})</span></td>
+          <td>{{ t.origin }} → {{ t.destination }}</td>
+          <td>${{ t.total_budget }}</td>
+          <td>{{ t.days }}</td>
+          <td>{{ t.created_at }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

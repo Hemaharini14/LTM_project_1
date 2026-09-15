@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · SmartRouteAI{% endblock %}
+{% block content %}
+<section class="hero">
+  <h1>Where are we headed, {{ current_user_name.split(' ')[0] }}?</h1>
+  <p>Pick what you need help with — checking a flight before you go, or planning a whole trip around your budget.</p>
+</section>
+
+<section class="option-grid">
+  <a class="option-card option-delay" href="{{ url_for('flight_delay') }}">
+    <div class="option-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+        <path d="M12 8v5l3 2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="12" cy="13" r="8.5"/>
+        <path d="M9.5 3h5M12 3v2" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <h2>Check Delay &amp; Recommend Alternative</h2>
+    <p>Enter your flight details, see your real delay risk, and — if it's risky — get an alternative route that fits your budget.</p>
+    <span class="option-cta">Check my flight →</span>
+  </a>
+
+  <a class="option-card option-budget" href="{{ url_for('budget_trip') }}">
+    <div class="option-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+        <path d="M12 2 3 7l9 5 9-5-9-5Z" stroke-linejoin="round"/>
+        <path d="M3 12l9 5 9-5M3 17l9 5 9-5" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <h2>Recommend a Trip Within My Budget</h2>
+    <p>Tell us your origin, destination, budget and comfort level — we'll plan flights, stay, food, transport and sightseeing end to end.</p>
+    <span class="option-cta">Plan my trip →</span>
+  </a>
+</section>
+
+<p class="history-link"><a href="{{ url_for('history') }}">View your trip history →</a></p>
+{% endblock %}

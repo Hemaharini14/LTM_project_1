@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}SmartRouteAI{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  {% block head %}{% endblock %}
+</head>
+<body class="{% block body_class %}{% endblock %}">
+  <nav class="navbar">
+    <a class="brand" href="{{ url_for('home') if current_user_name else url_for('login') }}">
+      <svg class="brand-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2.5 1.8V22l3.5-1 3.5 1v-1.2L12 19v-5.5l9 2.5z"/>
+      </svg>
+      <span>SmartRoute<em>AI</em></span>
+    </a>
+    {% if current_user_name %}
+    <div class="nav-links">
+      <a href="{{ url_for('home') }}" class="{{ 'active' if request.path == url_for('home') }}">Dashboard</a>
+      <a href="{{ url_for('flight_delay') }}" class="{{ 'active' if request.path == url_for('flight_delay') }}">Delay Check</a>
+      <a href="{{ url_for('budget_trip') }}" class="{{ 'active' if request.path == url_for('budget_trip') }}">Budget Trip</a>
+      <a href="{{ url_for('history') }}" class="{{ 'active' if request.path == url_for('history') }}">History</a>
+      {% if is_admin %}
+      <a href="{{ url_for('admin') }}" class="{{ 'active' if request.path == url_for('admin') }}">Admin</a>
+      {% endif %}
+      <span class="nav-user">Hi, {{ current_user_name.split(' ')[0] }}</span>
+      <a href="{{ url_for('logout') }}" class="btn btn-ghost btn-sm">Log out</a>
+    </div>
+    {% endif %}
+  </nav>
+
+  <main class="page">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flash-stack">
+          {% for category, message in messages %}
+            <div class="flash flash-{{ category }}">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-footer">
+    <span>SmartRouteAI · plan smarter, fly safer</span>
+  </footer>
+
+  {% if current_user_name %}
+    {% include "_chat_widget.html" %}
+  {% endif %}
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  {% if current_user_name %}
+  <script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+  {% endif %}
+  {% block scripts %}{% endblock %}
+</body>
+</html>

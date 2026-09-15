@@ -68,7 +68,18 @@ def main(epochs: int = 8, batch_size: int = 4096, lr: float = 1e-3):
 
     model = DelayNetV2(vocab_sizes, n_continuous=len(CONT_COLS)).to(DEVICE)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
-    criterion = nn.BCEWithLogitsLoss()
+
+    # Class imbalance fix: only ~18% of flights are delayed, so an unweighted
+    # loss lets the model minimize loss by mostly predicting "on-time" and
+    # still getting ~82% accuracy while catching almost no real delays
+    # (this is exactly what happened in the first training run - 0.04 recall
+    # on the Delayed class). pos_weight scales up the loss contribution from
+    # positive (Delayed) examples so the model is actually pushed to learn
+    # what separates them, not just to match the base rate.
+    pos_rate = train_df[TARGET_COL].mean()
+    pos_weight_value = (1 - pos_rate) / pos_rate
+    print(f"Class balance: {pos_rate:.1%} delayed -> using pos_weight={pos_weight_value:.2f}")
+    criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight_value], device=DEVICE))
 
     n_train = train_cat.shape[0]
     steps_per_epoch = int(np.ceil(n_train / batch_size))
@@ -116,9 +127,30 @@ def main(epochs: int = 8, batch_size: int = 4096, lr: float = 1e-3):
         if auc > best_auc:
             best_auc = auc
 
-    print("\nFinal validation report:")
+    print("\nFinal validation report (threshold=0.5):")
     print(classification_report(val_y.numpy(), val_preds, target_names=["On-time", "Delayed"]))
     print(f"Best val AUC: {best_auc:.4f}")
+
+    # threshold=0.5 is arbitrary - show the real precision/recall tradeoff
+    # across thresholds so you can pick one that fits the actual use case
+    # (e.g. for a travel-disruption alert, catching more real delays -
+    # higher recall - usually matters more than avoiding false alarms).
+    print("\nPrecision / Recall / F1 for 'Delayed' class at different thresholds:")
+    print(f"{'Threshold':>10} {'Precision':>10} {'Recall':>10} {'F1':>10}")
+    from sklearn.metrics import precision_score, recall_score, f1_score
+    best_f1, best_threshold = 0.0, 0.5
+    for t in [0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6]:
+        preds_t = (val_probs >= t).astype(int)
+        p = precision_score(val_y.numpy(), preds_t, zero_division=0)
+        r = recall_score(val_y.numpy(), preds_t, zero_division=0)
+        f1 = f1_score(val_y.numpy(), preds_t, zero_division=0)
+        marker = ""
+        if f1 > best_f1:
+            best_f1, best_threshold = f1, t
+            marker = "  <- best F1 so far"
+        print(f"{t:>10.2f} {p:>10.3f} {r:>10.3f} {f1:>10.3f}{marker}")
+    print(f"\nRecommended threshold (best F1): {best_threshold} -> use this instead of 0.5 "
+          f"when deciding 'is this flight high-risk' downstream.")
 
     os.makedirs(ARTIFACT_DIR, exist_ok=True)
     encoder.save(os.path.join(ARTIFACT_DIR, "delay_encoder_v2.joblib"))
@@ -126,6 +158,7 @@ def main(epochs: int = 8, batch_size: int = 4096, lr: float = 1e-3):
         "model_state": model.state_dict(),
         "vocab_sizes": vocab_sizes,
         "n_continuous": len(CONT_COLS),
+        "recommended_threshold": best_threshold,
     }, os.path.join(ARTIFACT_DIR, "delay_model_v2.pt"))
     print(f"\nSaved model + encoder to {ARTIFACT_DIR}")
 

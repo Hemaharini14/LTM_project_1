@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block title %}Budget Trip Planner · SmartRouteAI{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Plan a trip within your budget</h1>
+  <p>Tell us the essentials — we'll route flights, stay, food, transport and sightseeing end to end, both ways.</p>
+</section>
+
+<div class="panel-grid">
+  <div class="panel form-panel">
+    <h2>Trip details</h2>
+    <form method="post" class="form-stack">
+      <datalist id="airport-list">
+        {% for a in airports %}<option value="{{ a.code }}">{{ a.label }}</option>{% endfor %}
+      </datalist>
+      <div class="form-grid">
+        <label>Origin airport <span class="muted">(pick from list or type a code)</span>
+          <input type="text" name="origin_airport" list="airport-list" maxlength="4" placeholder="e.g. LAX" required
+                 value="{{ form_data.origin_airport or '' }}">
+        </label>
+        <label>Destination airport
+          <input type="text" name="destination_airport" list="airport-list" maxlength="4" placeholder="e.g. JFK" required
+                 value="{{ form_data.destination_airport or '' }}">
+        </label>
+        <label>Destination city <span class="muted">(for live weather)</span>
+          <input type="text" name="destination_city" placeholder="e.g. New York"
+                 value="{{ form_data.destination_city or '' }}">
+        </label>
+        <label>Start date
+          <input type="date" name="start_date" required value="{{ form_data.start_date or '' }}">
+        </label>
+        <label>Trip length (days)
+          <input type="number" name="days" min="1" max="30" value="{{ form_data.days or 5 }}" required>
+        </label>
+        <label>Total budget ($)
+          <input type="number" name="total_budget" min="50" value="{{ form_data.total_budget or 1500 }}" required>
+        </label>
+      </div>
+
+      <div class="form-grid">
+        <label>Stay comfort
+          <select name="stay_comfort">
+            <option value="budget" {{ 'selected' if form_data.stay_comfort=='budget' }}>Budget</option>
+            <option value="standard" {{ 'selected' if not form_data.stay_comfort or form_data.stay_comfort=='standard' }}>Standard</option>
+            <option value="luxury" {{ 'selected' if form_data.stay_comfort=='luxury' }}>Luxury</option>
+          </select>
+        </label>
+        <label>Travel comfort
+          <select name="travel_comfort">
+            <option value="budget" {{ 'selected' if form_data.travel_comfort=='budget' }}>Budget</option>
+            <option value="standard" {{ 'selected' if not form_data.travel_comfort or form_data.travel_comfort=='standard' }}>Standard</option>
+            <option value="luxury" {{ 'selected' if form_data.travel_comfort=='luxury' }}>Luxury</option>
+          </select>
+        </label>
+        <label>Food comfort
+          <select name="food_comfort">
+            <option value="budget" {{ 'selected' if form_data.food_comfort=='budget' }}>Budget</option>
+            <option value="standard" {{ 'selected' if not form_data.food_comfort or form_data.food_comfort=='standard' }}>Standard</option>
+            <option value="luxury" {{ 'selected' if form_data.food_comfort=='luxury' }}>Luxury</option>
+          </select>
+        </label>
+        <label>Sightseeing level
+          <select name="sightseeing_level">
+            <option value="light" {{ 'selected' if form_data.sightseeing_level=='light' }}>Light</option>
+            <option value="moderate" {{ 'selected' if not form_data.sightseeing_level or form_data.sightseeing_level=='moderate' }}>Moderate</option>
+            <option value="packed" {{ 'selected' if form_data.sightseeing_level=='packed' }}>Packed</option>
+          </select>
+        </label>
+      </div>
+
+      <button type="submit" class="btn btn-primary btn-block">Plan my trip</button>
+    </form>
+  </div>
+
+  {% if plan %}
+  <div class="panel result-panel">
+    {% if plan.route_reference %}
+    <p class="dataset-note">
+      <strong>{{ form_data.origin_airport }} ↔ {{ form_data.destination_airport }}</strong> isn't covered by the trained
+      delay-risk model (2019 US domestic flights only). Flight cards below show typical schedule info for reference,
+      with no delay-risk score — the budget/hotel/sightseeing plan still works normally.
+    </p>
+    {% elif not plan.route_covered %}
+    <div class="coverage-warning">
+      No flight data at all — not even a reference schedule — covers <strong>{{ form_data.origin_airport }}</strong> ↔
+      <strong>{{ form_data.destination_airport }}</strong>. Flight options are skipped below; the budget/hotel/sightseeing
+      plan still works. Share a dataset covering this route and it can be added.
+    </div>
+    {% endif %}
+    <h2>Budget breakdown</h2>
+    <div class="budget-bars">
+      {% for cat in ['flight_cost','hotel_cost','food_cost','transport_cost','sightseeing_cost'] %}
+      <div class="budget-row">
+        <span class="budget-cat">{{ cat.replace('_cost','')|capitalize }}</span>
+        <div class="budget-track"><div class="budget-fill" style="width: {{ (plan.budget_breakdown[cat] / plan.budget_breakdown.total * 100) | round(1) }}%"></div></div>
+        <span class="budget-amount">${{ plan.budget_breakdown[cat] }}</span>
+      </div>
+      {% endfor %}
+      <div class="budget-total">Total: ${{ plan.budget_breakdown.total }} · {{ plan.nights }} night(s)</div>
+    </div>
+
+    {% if plan.hotel_reality_check %}
+    <p class="muted reality-check">
+      Hotel budget check: <strong>{{ plan.hotel_reality_check.verdict }}</strong>
+      (real median for a similar stay: ${{ plan.hotel_reality_check.suggested_total_usd }})
+    </p>
+    {% endif %}
+
+    {% if plan.destination_weather %}
+    <div class="mini-card">
+      Destination weather: {{ plan.destination_weather.condition }} · {{ plan.destination_weather.temperature_celsius }}°C
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{% if plan %}
+<section class="panel recommendation-panel">
+  <h2>Your route, end to end</h2>
+  {% if plan.recommendation_text %}
+  <p class="recommendation-text">{{ plan.recommendation_text }}</p>
+  {% endif %}
+
+  <h3>Outbound flight</h3>
+  <div class="card-row">
+    {% for f in plan.outbound_flights %}
+    <div class="mini-card">
+      <strong>{{ carrier_name(f.carrier) }}{% if f.flight_number %} {{ f.flight_number }}{% endif %}</strong> · {{ f.route }}
+      {% if f.departure_time %}<span class="muted">Departs {{ f.departure_time }} → Arrives {{ f.arrival_time }}</span>{% endif %}
+      {% if f.typical_departure %}<span class="muted">Typical departure: {{ f.typical_departure }}</span>{% endif %}
+      {% if f.reference_only %}
+      <span class="badge admin-badge no">Reference schedule — not modeled</span>
+      {% else %}
+      <span class="badge risk-{{ f.risk_label|lower }}">{{ f.risk_label }} ({{ (f.delay_probability * 100) | round(1) }}%)</span>
+      {% endif %}
+      <span class="muted">~{{ f.scheduled_elapsed_time }} min</span>
+    </div>
+    {% else %}
+    <p class="muted">{{ 'No flight data for this route in the current database.' if not plan.route_covered else 'No matching historical flights found for this route/day.' }}</p>
+    {% endfor %}
+  </div>
+
+  <h3>Return flight</h3>
+  <div class="card-row">
+    {% for f in plan.return_flights %}
+    <div class="mini-card">
+      <strong>{{ carrier_name(f.carrier) }}{% if f.flight_number %} {{ f.flight_number }}{% endif %}</strong> · {{ f.route }}
+      {% if f.departure_time %}<span class="muted">Departs {{ f.departure_time }} → Arrives {{ f.arrival_time }}</span>{% endif %}
+      {% if f.typical_departure %}<span class="muted">Typical departure: {{ f.typical_departure }}</span>{% endif %}
+      {% if f.reference_only %}
+      <span class="badge admin-badge no">Reference schedule — not modeled</span>
+      {% else %}
+      <span class="badge risk-{{ f.risk_label|lower }}">{{ f.risk_label }} ({{ (f.delay_probability * 100) | round(1) }}%)</span>
+      {% endif %}
+      <span class="muted">~{{ f.scheduled_elapsed_time }} min</span>
+    </div>
+    {% else %}
+    <p class="muted">{{ 'No flight data for this route in the current database.' if not plan.route_covered else 'No matching historical flights found for the return route/day.' }}</p>
+    {% endfor %}
+  </div>
+  {% if (plan.outbound_flights or plan.return_flights) and plan.route_covered %}
+  <p class="dataset-note">Fare/price data isn't in the current flight dataset — only schedule and delay-risk. Share a fare dataset and pricing can be added here.</p>
+  {% endif %}
+
+  <h3>Stay <span class="muted">({{ plan.nights }} night{{ 's' if plan.nights != 1 else '' }})</span></h3>
+  <div class="card-row">
+    {% for h in plan.hotel_options %}
+    <div class="mini-card">
+      <strong>{{ h.hotel_type }}</strong> · Room {{ h.room_type }}
+      <span>${{ h.median_nightly_rate_usd }}/night · ${{ (h.median_nightly_rate_usd * plan.nights) | round(2) }} total</span>
+      <span class="muted">{{ (h.cancellation_rate * 100) | round(1) }}% historical cancellation</span>
+    </div>
+    {% else %}
+    <p class="muted">No hotel tier matched this budget — try increasing your total budget.</p>
+    {% endfor %}
+  </div>
+  {% if plan.hotel_options %}
+  <p class="dataset-note">The hotel dataset has price tiers by type/room only — no property names or destination linkage. Share a named-hotel dataset (with city/destination) and specific hotels can be recommended here.</p>
+  {% endif %}
+
+  <h3>Sightseeing &amp; day-by-day plan</h3>
+  <p class="muted">Daily food budget ${{ plan.daily_food_budget_usd }} · daily local transport ${{ plan.daily_transport_budget_usd }}</p>
+  {% if plan.food_source == 'curated' %}
+  <p class="dataset-note">Food picks below are hand-curated, well-known real spots for this destination — not from a trained dataset.</p>
+  {% elif plan.food_source == 'ai' or plan.sightseeing_source == 'ai' %}
+  <p class="dataset-note">
+    <strong>AI-suggested, unverified:</strong> no curated data exists for this destination, so
+    {{ 'food and sightseeing picks' if plan.food_source == 'ai' and plan.sightseeing_source == 'ai' else ('food picks' if plan.food_source == 'ai' else 'sightseeing picks') }}
+    below came from the configured LLM's general knowledge, not a checked dataset. Real places, but double-check before relying on them.
+  </p>
+  {% else %}
+  <p class="dataset-note">There's no points-of-interest/food-spot dataset for this destination yet, and no LLM is configured to suggest any — this is a generic budget template scaled to your sightseeing level. Share a dataset, or configure an LLM (see .env.example), to get named recommendations here.</p>
+  {% endif %}
+  <div class="day-plan">
+    {% for d in plan.day_plan %}
+    <div class="day-card">
+      <div class="day-number">Day {{ d.day }}</div>
+      <ul>
+        <li><strong>Morning:</strong> {{ d.morning }}</li>
+        <li><strong>Afternoon:</strong> {{ d.afternoon }}</li>
+        <li><strong>Evening:</strong> {{ d.evening }}</li>
+      </ul>
+      {% if d.food_pick %}<span class="muted">{{ d.food_pick.note }}</span>{% endif %}
+      <span class="day-spend">~${{ d.suggested_spend_usd }} sightseeing</span>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}

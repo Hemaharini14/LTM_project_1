@@ -1,0 +1,47 @@
+(function () {
+  const toggle = document.getElementById('chat-toggle');
+  const panel = document.getElementById('chat-panel');
+  const closeBtn = document.getElementById('chat-close');
+  const form = document.getElementById('chat-form');
+  const input = document.getElementById('chat-input');
+  const messages = document.getElementById('chat-messages');
+  if (!toggle || !panel || !form) return;
+
+  toggle.addEventListener('click', () => {
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) input.focus();
+  });
+  closeBtn.addEventListener('click', () => { panel.hidden = true; });
+
+  function addMessage(text, who) {
+    const div = document.createElement('div');
+    div.className = 'chat-msg chat-msg-' + who;
+    div.textContent = text;
+    messages.appendChild(div);
+    messages.scrollTop = messages.scrollHeight;
+    return div;
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    addMessage(text, 'user');
+    input.value = '';
+    const thinking = addMessage('Thinking…', 'bot thinking');
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text }),
+      });
+      const data = await res.json();
+      thinking.remove();
+      addMessage(data.reply || 'Sorry, something went wrong.', 'bot');
+    } catch (err) {
+      thinking.remove();
+      addMessage('Network error - is the server running?', 'bot');
+    }
+  });
+})();

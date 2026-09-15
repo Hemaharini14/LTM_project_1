@@ -1,5 +1,7 @@
 openai
 langchain
+langchain-openai
+langchain-anthropic
 langgraph
 crewai
 pandas
@@ -10,3 +12,7 @@ seaborn
 jupyter
 streamlit
 python-dotenv
+flask
+torch
+joblib
+truststore

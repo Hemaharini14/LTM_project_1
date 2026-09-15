@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Sign up · SmartRouteAI{% endblock %}
+{% block body_class %}auth-body{% endblock %}
+{% block content %}
+<div class="auth-wrap">
+  <div class="auth-visual">
+    <svg viewBox="0 0 200 200" class="auth-illustration" aria-hidden="true">
+      <circle cx="100" cy="100" r="90" class="auth-circle-1"/>
+      <circle cx="150" cy="50" r="30" class="auth-circle-2"/>
+      <path class="auth-plane" d="M40 130 L150 90 L140 84 L60 100 L45 92 L36 95 L48 106 L30 112 L34 118 L54 116 L64 128 Z"/>
+      <path class="auth-route" d="M30 150 Q100 100 170 60" fill="none" stroke-dasharray="4 6"/>
+    </svg>
+    <h2>Plan end to end.</h2>
+    <p>From flight to stay to sightseeing — one budget, one itinerary, no surprises.</p>
+  </div>
+
+  <div class="auth-card">
+    <h1>Create your account</h1>
+    <p class="muted">It takes less than a minute.</p>
+    <form method="post" class="form-stack">
+      <label>Full name
+        <input type="text" name="name" required autofocus placeholder="Jane Doe">
+      </label>
+      <label>Email
+        <input type="email" name="email" required placeholder="you@example.com">
+      </label>
+      <label>Password
+        <input type="password" name="password" required minlength="6" placeholder="At least 6 characters">
+      </label>
+      <button type="submit" class="btn btn-primary btn-block">Create account</button>
+    </form>
+    <p class="auth-switch">Already have an account? <a href="{{ url_for('login') }}">Log in</a></p>
+  </div>
+</div>
+{% endblock %}

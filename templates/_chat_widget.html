@@ -1,0 +1,24 @@
+<div class="chat-widget" id="chat-widget">
+  <button type="button" class="chat-toggle" id="chat-toggle" aria-label="Open travel assistant">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+      <path d="M4 5h16v11H7l-3 3V5Z" stroke-linejoin="round"/>
+      <path d="M8 9h8M8 12h5" stroke-linecap="round"/>
+    </svg>
+  </button>
+
+  <div class="chat-panel" id="chat-panel" hidden>
+    <div class="chat-panel-head">
+      <strong>Travel Assistant</strong>
+      <button type="button" id="chat-close" aria-label="Close">×</button>
+    </div>
+    <div class="chat-messages" id="chat-messages">
+      <div class="chat-msg chat-msg-bot">
+        Hi! I can check delay risk, find real flights/hotel tiers, or explain a plan. Ask me anything about your trip.
+      </div>
+    </div>
+    <form id="chat-form" class="chat-form">
+      <input type="text" id="chat-input" placeholder="Ask about a flight, hotel, or route…" autocomplete="off">
+      <button type="submit" class="btn btn-primary btn-sm">Send</button>
+    </form>
+  </div>
+</div>

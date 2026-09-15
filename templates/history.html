@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Trip History · SmartRouteAI{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Your trip history</h1>
+  <p>Past delay checks and budget trip plans, most recent first.</p>
+</section>
+
+<section class="panel">
+  <h2>Flight delay checks</h2>
+  {% if flight_history %}
+  <div class="history-list">
+    {% for c in flight_history %}
+    <a class="history-item-link" href="{{ url_for('history_flight_detail', check_id=c.id) }}">
+      <div class="history-item">
+        <div class="history-main">
+          <span class="badge risk-{{ c.risk_label|lower }}">{{ c.risk_label }} ({{ (c.probability * 100) | round(1) }}%)</span>
+          <strong>{{ c.carrier }} · {{ c.origin }} → {{ c.destination }}</strong>
+          <span class="muted">{{ c.travel_date }}</span>
+        </div>
+        {% if c.recommendation_text %}
+        <p class="history-note">{{ c.recommendation_text }}</p>
+        {% endif %}
+        <span class="history-time">{{ c.created_at }}</span>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted history-empty">No flight checks yet. <a href="{{ url_for('flight_delay') }}">Check a flight</a> to get started.</p>
+  {% endif %}
+</section>
+
+<section class="panel" style="margin-top: 24px;">
+  <h2>Budget trip plans</h2>
+  {% if trip_history %}
+  <div class="history-list">
+    {% for t in trip_history %}
+    <a class="history-item-link" href="{{ url_for('history_trip_detail', trip_id=t.id) }}">
+      <div class="history-item">
+        <div class="history-main">
+          <strong>{{ t.origin }} → {{ t.destination }}</strong>
+          <span>${{ t.total_budget }} · {{ t.days }} day(s)</span>
+          <span class="muted">{{ t.start_date }} → {{ t.return_date }}</span>
+        </div>
+        <p class="history-note">
+          Stay: {{ t.stay_comfort|capitalize }} · Travel: {{ t.travel_comfort|capitalize }} ·
+          Food: {{ t.food_comfort|capitalize }} · Sightseeing: {{ t.sightseeing_level|capitalize }}
+        </p>
+        <span class="history-time">{{ t.created_at }}</span>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted history-empty">No trips planned yet. <a href="{{ url_for('budget_trip') }}">Plan a trip</a> to get started.</p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% block title %}Flight Delay Check · SmartRouteAI{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Check your flight's delay risk</h1>
+  <p>We score your flight with our trained delay-prediction model using real flight and weather patterns.</p>
+</section>
+
+<div class="panel-grid">
+  <div class="panel form-panel">
+    <h2>Flight details</h2>
+    <form method="post" class="form-stack">
+      <input type="hidden" name="stage" value="check">
+      <datalist id="airport-list">
+        {% for a in airports %}<option value="{{ a.code }}">{{ a.label }}</option>{% endfor %}
+      </datalist>
+
+      <div class="form-grid">
+        <label>Airline
+          <select name="carrier_code" required>
+            <option value="">Select airline…</option>
+            {% for c in carriers %}
+            <option value="{{ c.code }}" {{ 'selected' if result and result.inputs.carrier_code == c.code }}>{{ c.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Travel date
+          <input type="date" name="travel_date" required
+                 value="{{ result.inputs.travel_date if result else '' }}">
+        </label>
+        <label>Origin airport <span class="muted">(pick from list or type a code)</span>
+          <input type="text" name="origin_airport" list="airport-list" maxlength="4" placeholder="e.g. LAX" required
+                 value="{{ result.inputs.origin_airport if result else '' }}">
+        </label>
+        <label>Destination airport
+          <input type="text" name="destination_airport" list="airport-list" maxlength="4" placeholder="e.g. SFO" required
+                 value="{{ result.inputs.destination_airport if result else '' }}">
+        </label>
+        <label>Destination city <span class="muted">(for live weather)</span>
+          <input type="text" name="destination_city" placeholder="e.g. San Francisco"
+                 value="{{ result.inputs.destination_city if result else '' }}">
+        </label>
+        <label>Scheduled flight time (minutes)
+          <input type="number" name="scheduled_elapsed_time" min="20" step="1" value="{{ result.inputs.scheduled_elapsed_time if result else 120 }}">
+        </label>
+      </div>
+
+      <details class="weather-details">
+        <summary>Weather conditions <span class="muted">(prefilled with typical clear-weather values — adjust if you know the forecast)</span></summary>
+        <div class="form-grid weather-grid">
+          <fieldset>
+            <legend>Origin</legend>
+            <label>Temp (°F) <input type="number" name="origin_temp_f" value="{{ result.inputs.origin_temp_f if result else 55 }}"></label>
+            <label>Precipitation (in) <input type="number" step="0.01" name="origin_precip_in" value="{{ result.inputs.origin_precip_in if result else 0 }}"></label>
+            <label>Pressure (inHg) <input type="number" step="0.01" name="origin_pressure" value="{{ result.inputs.origin_pressure if result else 29.9 }}"></label>
+            <label>Visibility (mi) <input type="number" step="0.1" name="origin_visibility" value="{{ result.inputs.origin_visibility if result else 10 }}"></label>
+            <label>Wind speed (mph) <input type="number" step="0.1" name="origin_wind_speed" value="{{ result.inputs.origin_wind_speed if result else 8 }}"></label>
+          </fieldset>
+          <fieldset>
+            <legend>Destination</legend>
+            <label>Temp (°F) <input type="number" name="dest_temp_f" value="{{ result.inputs.dest_temp_f if result else 55 }}"></label>
+            <label>Precipitation (in) <input type="number" step="0.01" name="dest_precip_in" value="{{ result.inputs.dest_precip_in if result else 0 }}"></label>
+            <label>Pressure (inHg) <input type="number" step="0.01" name="dest_pressure" value="{{ result.inputs.dest_pressure if result else 29.9 }}"></label>
+            <label>Visibility (mi) <input type="number" step="0.1" name="dest_visibility" value="{{ result.inputs.dest_visibility if result else 10 }}"></label>
+            <label>Wind speed (mph) <input type="number" step="0.1" name="dest_wind_speed" value="{{ result.inputs.dest_wind_speed if result else 8 }}"></label>
+          </fieldset>
+        </div>
+      </details>
+
+      <button type="submit" class="btn btn-primary btn-block">Check delay risk</button>
+    </form>
+  </div>
+
+  {% if result and result.no_data %}
+  <div class="panel result-panel">
+    <h2>Result</h2>
+    <div class="coverage-warning">
+      We don't have any flight data covering <strong>{{ result.inputs.origin_airport }}</strong> or
+      <strong>{{ result.inputs.destination_airport }}</strong> in our current database — it only
+      covers 2019 US domestic airports. We can't give you a real delay estimate for this route
+      (including international destinations, e.g. Singapore) without more data.
+      <br><br>
+      If you can share a dataset that covers this route or country, pass it along and it can be
+      wired into the model.
+    </div>
+  </div>
+  {% elif result and result.reference_only %}
+  <div class="panel result-panel">
+    <h2>Result</h2>
+    <p class="dataset-note">
+      <strong>{{ result.inputs.origin_airport }} → {{ result.inputs.destination_airport }}</strong> isn't covered by the
+      trained delay-risk model (2019 US domestic flights only) — this is an international route. Showing typical
+      schedule info for reference only, with no delay-risk score.
+    </p>
+    <div class="card-row">
+      {% for f in result.reference_flights %}
+      <div class="mini-card">
+        <strong>{{ carrier_name(f.carrier) }}</strong> · {{ f.route }}
+        {% if f.typical_departure %}<span class="muted">Typical departure: {{ f.typical_departure }}</span>{% endif %}
+        <span class="badge admin-badge no">Reference schedule — not modeled</span>
+        <span class="muted">~{{ f.scheduled_elapsed_time }} min flight</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% elif result %}
+  <div class="panel result-panel">
+    <h2>Result</h2>
+    <div class="risk-badge risk-{{ result.label|lower }}">
+      <span class="risk-percent">{{ (result.probability * 100) | round(1) }}%</span>
+      <span class="risk-label">{{ result.label }} risk</span>
+    </div>
+
+    {% if result.label == 'Low' %}
+      <p class="result-message safe">No significant delay expected. Have a safe journey!</p>
+    {% else %}
+      <p class="result-message warn">
+        Your flight has a {{ result.label|lower }} chance of delay.
+        Would you like us to recommend an alternative that fits your budget?
+      </p>
+
+      {% if not recommendation %}
+      <form method="post" class="form-stack budget-subform">
+        <input type="hidden" name="stage" value="recover">
+        <div class="form-grid">
+          <label>Flight budget ($) <input type="number" name="flight_cost" value="150" min="0"></label>
+          <label>Hotel budget ($) <input type="number" name="hotel_cost" value="400" min="0"></label>
+          <label>Food budget ($) <input type="number" name="food_cost" value="250" min="0"></label>
+          <label>Transport budget ($) <input type="number" name="transport_cost" value="150" min="0"></label>
+          <label>Sightseeing budget ($) <input type="number" name="sightseeing_cost" value="150" min="0"></label>
+          <label>What matters most?
+            <select name="priority">
+              <option value="cost">Lowest cost</option>
+              <option value="time">Least delay risk</option>
+              <option value="comfort">Comfort</option>
+            </select>
+          </label>
+        </div>
+        <button type="submit" class="btn btn-secondary btn-block">Yes, recommend an alternative</button>
+      </form>
+      {% endif %}
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{% if recommendation %}
+<section class="panel recommendation-panel">
+  <h2>Your alternative plan</h2>
+  <p class="recommendation-text">{{ recommendation.recommendation_text }}</p>
+
+  {% if recommendation.alternative_flights %}
+  <h3>Alternative flights</h3>
+  <div class="card-row">
+    {% for f in recommendation.alternative_flights %}
+    <div class="mini-card">
+      <strong>{{ carrier_name(f.carrier) }} {{ f.flight_number }}</strong> · {{ f.route }}
+      {% if f.departure_time %}<span class="muted">Departs {{ f.departure_time }} → Arrives {{ f.arrival_time }}</span>{% endif %}
+      <span class="badge risk-{{ f.risk_label|lower }}">{{ f.risk_label }} ({{ (f.delay_probability * 100) | round(1) }}%)</span>
+      <span class="muted">{{ f.scheduled_elapsed_time }} min flight</span>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="dataset-note">Fare/price data isn't in the current flight dataset — only schedule and delay-risk. Share a fare dataset and pricing can be added here.</p>
+  {% endif %}
+
+  {% if recommendation.hotel_options %}
+  <h3>Hotel options nearby <span class="muted">(assuming a {{ recommendation.assumed_hotel_nights }}-night stay)</span></h3>
+  <div class="card-row">
+    {% for h in recommendation.hotel_options %}
+    <div class="mini-card">
+      <strong>{{ h.hotel_type }}</strong> · Room {{ h.room_type }}
+      <span>${{ h.median_nightly_rate_usd }}/night · ${{ (h.median_nightly_rate_usd * recommendation.assumed_hotel_nights) | round(2) }} total</span>
+      <span class="muted">{{ (h.cancellation_rate * 100) | round(1) }}% historical cancellation</span>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="dataset-note">The hotel dataset has price tiers by type/room only — no property names. Share a named-hotel dataset and specific hotels can be recommended here.</p>
+  {% endif %}
+
+  {% if recommendation.destination_weather %}
+  <h3>Destination weather</h3>
+  <div class="mini-card">
+    {{ recommendation.destination_weather.condition }} · {{ recommendation.destination_weather.temperature_celsius }}°C ·
+    updated {{ recommendation.destination_weather.last_updated }}
+  </div>
+  {% endif %}
+
+  {% if recommendation.new_budget %}
+  <h3>Adjusted budget</h3>
+  <div class="budget-bars">
+    {% for cat in ['flight_cost','hotel_cost','food_cost','transport_cost','sightseeing_cost'] %}
+    <div class="budget-row">
+      <span class="budget-cat">{{ cat.replace('_cost','')|capitalize }}</span>
+      <div class="budget-track"><div class="budget-fill" style="width: {{ (recommendation.new_budget[cat] / recommendation.new_budget.total * 100) | round(1) }}%"></div></div>
+      <span class="budget-amount">${{ recommendation.new_budget[cat] }}</span>
+    </div>
+    {% endfor %}
+    <div class="budget-total">Total: ${{ recommendation.new_budget.total }}</div>
+  </div>
+  {% if recommendation.trim_log %}
+  <ul class="trim-log">
+    {% for line in recommendation.trim_log %}<li>{{ line }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}
