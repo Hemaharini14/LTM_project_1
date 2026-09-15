@@ -19,6 +19,7 @@ models/artifacts/
 
 # Environment variables / API keys — NEVER commit these
 .env
+.env.example
 
 # OS junk
 .DS_Store
