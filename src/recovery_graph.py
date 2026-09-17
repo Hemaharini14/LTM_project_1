@@ -38,15 +38,11 @@ class TripState(TypedDict, total=False):
     month: int
     scheduled_elapsed_time: float
     origin_temp_f: float
+    origin_temp_known: bool  # False for routes with no real temperature reading (e.g. India)
     origin_precip_in: float
     origin_pressure: float
     origin_visibility: float
     origin_wind_speed: float
-    dest_temp_f: float
-    dest_precip_in: float
-    dest_pressure: float
-    dest_visibility: float
-    dest_wind_speed: float
     priority: str  # 'cost' | 'time' | 'comfort'
     budget: dict  # flight_cost, hotel_cost, food_cost, transport_cost, sightseeing_cost
 
@@ -71,12 +67,10 @@ def check_risk(state: TripState) -> TripState:
         carrier_code=state["carrier_code"], origin_airport=state["origin_airport"],
         destination_airport=state["destination_airport"], weekday=state["weekday"],
         month=state["month"], scheduled_elapsed_time=state["scheduled_elapsed_time"],
-        origin_temp_f=state["origin_temp_f"], origin_precip_in=state["origin_precip_in"],
+        origin_temp_f=state["origin_temp_f"], origin_temp_known=state.get("origin_temp_known", True),
+        origin_precip_in=state["origin_precip_in"],
         origin_pressure=state["origin_pressure"], origin_visibility=state["origin_visibility"],
         origin_wind_speed=state["origin_wind_speed"],
-        dest_temp_f=state["dest_temp_f"], dest_precip_in=state["dest_precip_in"],
-        dest_pressure=state["dest_pressure"], dest_visibility=state["dest_visibility"],
-        dest_wind_speed=state["dest_wind_speed"],
     )
     return {"delay_probability": prob, "risk_label": risk_label(prob)}
 
@@ -205,16 +199,13 @@ if __name__ == "__main__":
         "carrier_code": "WN", "origin_airport": "LAX", "destination_airport": "SFO",
         "destination_city": "San Francisco", "weekday": 5, "month": 12,
         "scheduled_elapsed_time": 90,
-        "origin_temp_f": 55, "origin_precip_in": 0.3, "origin_pressure": 29.6,
+        "origin_temp_f": 55, "origin_temp_known": True, "origin_precip_in": 0.3, "origin_pressure": 29.6,
         "origin_visibility": 3.0, "origin_wind_speed": 20,
-        "dest_temp_f": 58, "dest_precip_in": 0.1, "dest_pressure": 29.8,
-        "dest_visibility": 6.0, "dest_wind_speed": 12,
         "priority": "time",
         "budget": {"flight_cost": 150, "hotel_cost": 400, "food_cost": 250,
                    "transport_cost": 150, "sightseeing_cost": 150},
     }
     result = app.invoke(sample_trip)
     print(json.dumps({k: v for k, v in result.items() if k not in
-                       ("origin_temp_f","origin_precip_in","origin_pressure","origin_visibility",
-                        "origin_wind_speed","dest_temp_f","dest_precip_in","dest_pressure",
-                        "dest_visibility","dest_wind_speed")}, indent=2, default=str))
+                       ("origin_temp_f","origin_temp_known","origin_precip_in","origin_pressure",
+                        "origin_visibility","origin_wind_speed")}, indent=2, default=str))

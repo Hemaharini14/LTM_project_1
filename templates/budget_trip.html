@@ -32,7 +32,7 @@
         <label>Trip length (days)
           <input type="number" name="days" min="1" max="30" value="{{ form_data.days or 5 }}" required>
         </label>
-        <label>Total budget ($)
+        <label>Total budget (USD $)
           <input type="number" name="total_budget" min="50" value="{{ form_data.total_budget or 1500 }}" required>
         </label>
       </div>
@@ -75,11 +75,7 @@
   {% if plan %}
   <div class="panel result-panel">
     {% if plan.route_reference %}
-    <p class="dataset-note">
-      <strong>{{ form_data.origin_airport }} ↔ {{ form_data.destination_airport }}</strong> isn't covered by the trained
-      delay-risk model (2019 US domestic flights only). Flight cards below show typical schedule info for reference,
-      with no delay-risk score — the budget/hotel/sightseeing plan still works normally.
-    </p>
+    <p class="dataset-note">International route — flight cards below are a reference schedule, no delay-risk score.</p>
     {% elif not plan.route_covered %}
     <div class="coverage-warning">
       No flight data at all — not even a reference schedule — covers <strong>{{ form_data.origin_airport }}</strong> ↔
@@ -93,16 +89,16 @@
       <div class="budget-row">
         <span class="budget-cat">{{ cat.replace('_cost','')|capitalize }}</span>
         <div class="budget-track"><div class="budget-fill" style="width: {{ (plan.budget_breakdown[cat] / plan.budget_breakdown.total * 100) | round(1) }}%"></div></div>
-        <span class="budget-amount">${{ plan.budget_breakdown[cat] }}</span>
+        <span class="budget-amount">{{ plan.budget_breakdown[cat] | money }}</span>
       </div>
       {% endfor %}
-      <div class="budget-total">Total: ${{ plan.budget_breakdown.total }} · {{ plan.nights }} night(s)</div>
+      <div class="budget-total">Total: {{ plan.budget_breakdown.total | money }} · {{ plan.nights }} night(s)</div>
     </div>
 
     {% if plan.hotel_reality_check %}
     <p class="muted reality-check">
       Hotel budget check: <strong>{{ plan.hotel_reality_check.verdict }}</strong>
-      (real median for a similar stay: ${{ plan.hotel_reality_check.suggested_total_usd }})
+      (real median for a similar stay: {{ plan.hotel_reality_check.suggested_total_usd | money }})
     </p>
     {% endif %}
 
@@ -119,7 +115,7 @@
 <section class="panel recommendation-panel">
   <h2>Your route, end to end</h2>
   {% if plan.recommendation_text %}
-  <p class="recommendation-text">{{ plan.recommendation_text }}</p>
+  <div class="recommendation-text">{{ plan.recommendation_text | render_markdown | safe }}</div>
   {% endif %}
 
   <h3>Outbound flight</h3>
@@ -160,37 +156,49 @@
     {% endfor %}
   </div>
   {% if (plan.outbound_flights or plan.return_flights) and plan.route_covered %}
-  <p class="dataset-note">Fare/price data isn't in the current flight dataset — only schedule and delay-risk. Share a fare dataset and pricing can be added here.</p>
+  <p class="dataset-note">No fare data available — schedule and delay-risk only.</p>
   {% endif %}
 
   <h3>Stay <span class="muted">({{ plan.nights }} night{{ 's' if plan.nights != 1 else '' }})</span></h3>
+  {% if plan.hotel_options %}
+  {% set best_hotel = plan.hotel_options[0] %}
+  <div class="mini-card hotel-estimate-card">
+    <span>Estimated cost for this style of stay: <strong>{{ best_hotel.median_nightly_rate_usd | money }}/night · {{ (best_hotel.median_nightly_rate_usd * plan.nights) | money }} total</strong></span>
+    <span class="reliability-bar"><span class="reliability-fill" style="width: {{ best_hotel.reliability_pct }}%"></span></span>
+    <span class="muted">{{ best_hotel.reliability_pct }}% of past bookings kept (not cancelled) — real historical pricing, no property name in this dataset</span>
+  </div>
+  {% else %}
+  <p class="muted">No hotel tier matched this budget — try increasing your total budget.</p>
+  {% endif %}
+
+  {% if plan.suggested_hotels %}
+  <h4 class="sub-heading">Pick a hotel <span class="muted">(AI-suggested, real names)</span></h4>
+  <p class="dataset-note">Real names, unverified — no price data; confirm details before booking.</p>
   <div class="card-row">
-    {% for h in plan.hotel_options %}
-    <div class="mini-card">
-      <strong>{{ h.hotel_type }}</strong> · Room {{ h.room_type }}
-      <span>${{ h.median_nightly_rate_usd }}/night · ${{ (h.median_nightly_rate_usd * plan.nights) | round(2) }} total</span>
-      <span class="muted">{{ (h.cancellation_rate * 100) | round(1) }}% historical cancellation</span>
+    {% for h in plan.suggested_hotels %}
+    <div class="mini-card hotel-suggestion-card">
+      <strong>{{ h.name }}</strong>
+      <span class="muted">{{ h.area }}</span>
+      <span class="muted">{{ h.note }}</span>
+      {% if h.map_url %}
+      <iframe class="hotel-map" src="{{ h.map_url }}" loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="Map for {{ h.name }}"></iframe>
+      {% if h.map_approximate %}<span class="muted">Map centered on the area — exact location not confirmed</span>{% endif %}
+      {% else %}
+      <span class="muted">Map unavailable for this location</span>
+      {% endif %}
     </div>
-    {% else %}
-    <p class="muted">No hotel tier matched this budget — try increasing your total budget.</p>
     {% endfor %}
   </div>
-  {% if plan.hotel_options %}
-  <p class="dataset-note">The hotel dataset has price tiers by type/room only — no property names or destination linkage. Share a named-hotel dataset (with city/destination) and specific hotels can be recommended here.</p>
   {% endif %}
 
   <h3>Sightseeing &amp; day-by-day plan</h3>
-  <p class="muted">Daily food budget ${{ plan.daily_food_budget_usd }} · daily local transport ${{ plan.daily_transport_budget_usd }}</p>
+  <p class="muted">Daily food budget {{ plan.daily_food_budget_usd | money }} · daily local transport {{ plan.daily_transport_budget_usd | money }}</p>
   {% if plan.food_source == 'curated' %}
-  <p class="dataset-note">Food picks below are hand-curated, well-known real spots for this destination — not from a trained dataset.</p>
+  <p class="dataset-note">Curated real spots for this destination.</p>
   {% elif plan.food_source == 'ai' or plan.sightseeing_source == 'ai' %}
-  <p class="dataset-note">
-    <strong>AI-suggested, unverified:</strong> no curated data exists for this destination, so
-    {{ 'food and sightseeing picks' if plan.food_source == 'ai' and plan.sightseeing_source == 'ai' else ('food picks' if plan.food_source == 'ai' else 'sightseeing picks') }}
-    below came from the configured LLM's general knowledge, not a checked dataset. Real places, but double-check before relying on them.
-  </p>
+  <p class="dataset-note">AI-suggested, unverified — double-check before relying on these.</p>
   {% else %}
-  <p class="dataset-note">There's no points-of-interest/food-spot dataset for this destination yet, and no LLM is configured to suggest any — this is a generic budget template scaled to your sightseeing level. Share a dataset, or configure an LLM (see .env.example), to get named recommendations here.</p>
+  <p class="dataset-note">Generic template — no destination data or LLM available.</p>
   {% endif %}
   <div class="day-plan">
     {% for d in plan.day_plan %}
@@ -202,7 +210,7 @@
         <li><strong>Evening:</strong> {{ d.evening }}</li>
       </ul>
       {% if d.food_pick %}<span class="muted">{{ d.food_pick.note }}</span>{% endif %}
-      <span class="day-spend">~${{ d.suggested_spend_usd }} sightseeing</span>
+      <span class="day-spend">~{{ d.suggested_spend_usd | money }} sightseeing</span>
     </div>
     {% endfor %}
   </div>

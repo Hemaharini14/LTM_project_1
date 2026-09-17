@@ -19,7 +19,8 @@ from recovery_tools import (
 )
 from budget_optimizer import suggest_realistic_hotel_budget, validate_hotel_budget
 from intl_reference import get_reference_flights, food_spots_for
-from llm_utils import suggest_food_and_sightseeing
+from llm_utils import suggest_destination_content
+from maps import geocode_hotel, osm_embed_url
 
 # Base share of total budget per category before comfort-level adjustment
 BASE_SHARE = {
@@ -97,9 +98,10 @@ def plan_budget_trip(
             exclude_carrier="", weekday=return_weekday, priority=travel_priority, top_n=3,
         )
     else:
-        # Not in the trained (2019 US domestic) dataset - fall back to curated
-        # reference schedules for known international routes, if any. These
-        # carry no delay-risk score; the model has no signal for them.
+        # Not in the trained (2019 US domestic + real India domestic) dataset -
+        # fall back to curated reference schedules for known cross-border
+        # routes, if any. These carry no delay-risk score; the model has no
+        # signal for them.
         outbound_flights = get_reference_flights(origin_airport, destination_airport)
         return_flights = get_reference_flights(destination_airport, origin_airport)
         route_reference = bool(outbound_flights or return_flights)
@@ -110,17 +112,28 @@ def plan_budget_trip(
 
     weather = get_destination_weather(destination_city) if destination_city else None
 
+    ai_data = suggest_destination_content(destination_city) if destination_city else None
+
     food_spots = food_spots_for(destination_city)
-    sightseeing_spots = []
     food_source = "curated" if food_spots else "none"
-    if not food_spots and destination_city:
-        ai_data = suggest_food_and_sightseeing(destination_city)
-        if ai_data:
-            food_spots = ai_data.get("food_spots", [])
-            sightseeing_spots = ai_data.get("sightseeing", [])
-            if food_spots:
-                food_source = "ai"
+    if not food_spots and ai_data:
+        food_spots = ai_data.get("food_spots", [])
+        if food_spots:
+            food_source = "ai"
+
+    sightseeing_spots = ai_data.get("sightseeing", []) if ai_data else []
     sightseeing_source = "ai" if sightseeing_spots else "none"
+
+    suggested_hotels_raw = (ai_data.get("hotels", []) if ai_data else [])[:3]
+    hotel_source = "ai" if suggested_hotels_raw else "none"
+    suggested_hotels = []
+    for h in suggested_hotels_raw:
+        geo = geocode_hotel(h["name"], destination_city)
+        suggested_hotels.append({
+            **h,
+            "map_url": osm_embed_url(geo["lat"], geo["lon"]) if geo else None,
+            "map_approximate": geo.get("approximate", True) if geo else None,
+        })
 
     template = SIGHTSEEING_TEMPLATE.get(sightseeing_level, SIGHTSEEING_TEMPLATE["moderate"])
     sightseeing_per_day = round(budget["sightseeing_cost"] / days, 2)
@@ -167,6 +180,8 @@ def plan_budget_trip(
         "return_flights": return_flights,
         "hotel_options": hotel_options,
         "hotel_reality_check": hotel_reality_check,
+        "suggested_hotels": suggested_hotels,
+        "hotel_source": hotel_source,
         "destination_weather": weather,
         "food_source": food_source,
         "sightseeing_source": sightseeing_source,

@@ -13,11 +13,12 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
-from llm_utils import get_llm
+from llm_utils import get_llm, suggest_destination_content
 from recovery_tools import (
     search_alternative_flights, search_hotel_options, get_destination_weather,
     is_route_covered, get_dataset_index,
 )
+from intl_reference import get_reference_flights, food_spots_for
 from predict_delay_v2 import predict_delay_probability, risk_label
 
 _DEFAULT_WEATHER = {"temp_f": 55, "precip_in": 0.0, "pressure": 29.9, "visibility": 10.0, "wind_speed": 8}
@@ -25,12 +26,17 @@ _DEFAULT_WEATHER = {"temp_f": 55, "precip_in": 0.0, "pressure": 29.9, "visibilit
 SYSTEM_PROMPT = (
     "You are the SmartRouteAI travel assistant, embedded as a sidebar chatbot. "
     "You help with two things: checking flight delay risk, and planning a trip within a budget. "
-    "The underlying dataset is US domestic flights from 2019 only (no international routes, no "
-    "real-time fares, no named hotels or points of interest - only hotel price TIERS and generic "
-    "sightseeing budgeting). Always call check_route_coverage before quoting flight data for a "
-    "route, and tell the user plainly when a route/country isn't covered instead of guessing. "
-    "Never invent a flight, price, hotel name, or attraction that a tool didn't return. Keep "
-    "answers short and concrete."
+    "The underlying dataset is US domestic flights from 2019 plus real India domestic flights "
+    "(BLR/BOM/CCU/DEL/HYD, 2019-2020) - no international/cross-border routes, no real-time fares, "
+    "no named hotels or points of interest (only hotel price TIERS and generic sightseeing "
+    "budgeting). Always call check_route_coverage before quoting flight data for a route, and "
+    "tell the user plainly when a route/country isn't covered instead of guessing. Never invent "
+    "a flight, price, hotel name, or attraction that a tool didn't return. Keep answers short and "
+    "concrete. If check_route_coverage says a route isn't covered, still call find_reference_flights "
+    "before telling the user there's no flight info at all - cross-border routes (India<->Singapore/"
+    "Malaysia/UAE) have a curated reference schedule (carrier and typical timing only, explicitly "
+    "NOT a delay-risk prediction) even though the trained model has no risk score for them. "
+    "Distinguish these two cases clearly to the user."
 )
 
 
@@ -57,10 +63,8 @@ def check_flight_delay_risk(carrier_code: str, origin_airport: str, destination_
     prob = predict_delay_probability(
         carrier_code=carrier_code, origin_airport=origin_airport, destination_airport=destination_airport,
         weekday=weekday, month=month, scheduled_elapsed_time=scheduled_elapsed_time,
-        dest_temp_f=_DEFAULT_WEATHER["temp_f"], dest_precip_in=_DEFAULT_WEATHER["precip_in"],
-        dest_pressure=_DEFAULT_WEATHER["pressure"], dest_visibility=_DEFAULT_WEATHER["visibility"],
-        dest_wind_speed=_DEFAULT_WEATHER["wind_speed"],
-        origin_temp_f=_DEFAULT_WEATHER["temp_f"], origin_precip_in=_DEFAULT_WEATHER["precip_in"],
+        origin_temp_f=_DEFAULT_WEATHER["temp_f"], origin_temp_known=False,
+        origin_precip_in=_DEFAULT_WEATHER["precip_in"],
         origin_pressure=_DEFAULT_WEATHER["pressure"], origin_visibility=_DEFAULT_WEATHER["visibility"],
         origin_wind_speed=_DEFAULT_WEATHER["wind_speed"],
     )
@@ -69,9 +73,11 @@ def check_flight_delay_risk(carrier_code: str, origin_airport: str, destination_
 
 @tool
 def find_flights(origin_airport: str, destination_airport: str, weekday: int, priority: str = "cost") -> str:
-    """Find real historical flight options for a route. priority is 'cost', 'time', or 'comfort'."""
+    """Find real historical flight options for a route, scored by the trained delay model.
+    priority is 'cost', 'time', or 'comfort'. If this returns "not covered", call
+    find_reference_flights next before concluding there's nothing to show."""
     if not is_route_covered(origin_airport, destination_airport):
-        return "This route isn't covered by the dataset - no flights to show."
+        return "NOT COVERED by the trained model - call find_reference_flights before answering."
     options = search_alternative_flights(origin_airport, destination_airport, exclude_carrier="",
                                           weekday=weekday, priority=priority, top_n=3)
     if not options:
@@ -79,6 +85,21 @@ def find_flights(origin_airport: str, destination_airport: str, weekday: int, pr
     return "\n".join(
         f"{o['carrier']} {o['flight_number']} · {o['route']} · {o['scheduled_elapsed_time']}min · "
         f"{o['risk_label']} risk ({o['delay_probability']:.0%}) - no fare data available"
+        for o in options
+    )
+
+
+@tool
+def find_reference_flights(origin_airport: str, destination_airport: str) -> str:
+    """For routes NOT covered by the trained model (e.g. India/Singapore/Malaysia): look up a
+    curated reference schedule (real airlines, typical duration/time-of-day). This is NOT a
+    delay-risk prediction - always say so. Returns empty if no reference data exists either."""
+    options = get_reference_flights(origin_airport, destination_airport)
+    if not options:
+        return "No reference schedule either - genuinely no flight data at all for this route."
+    return "\n".join(
+        f"{o['carrier']} · {o['route']} · ~{o['scheduled_elapsed_time']}min · "
+        f"typical departure: {o['typical_departure']} - REFERENCE SCHEDULE ONLY, not a delay-risk prediction"
         for o in options
     )
 
@@ -106,7 +127,27 @@ def check_destination_weather(city: str) -> str:
     return f"{weather['condition']}, {weather['temperature_celsius']}°C, updated {weather['last_updated']}."
 
 
-_TOOLS = [check_route_coverage, check_flight_delay_risk, find_flights, find_hotels, check_destination_weather]
+@tool
+def find_food_and_sightseeing(city: str) -> str:
+    """Find food spots and sightseeing highlights for a city. Tries the curated (verified) list
+    first; if nothing curated exists, falls back to an LLM suggestion - always tell the user which
+    kind it is (curated real data vs. AI-suggested/unverified) using the label this tool returns."""
+    curated = food_spots_for(city)
+    if curated:
+        lines = [f"{s['name']} ({s['area']}) - {s['note']}" for s in curated]
+        return "CURATED, VERIFIED food spots:\n" + "\n".join(lines)
+    ai_data = suggest_destination_content(city)
+    if not ai_data or not (ai_data.get("food_spots") or ai_data.get("sightseeing")):
+        return f"No curated data and no AI suggestions available for '{city}'."
+    lines = [f"AI-SUGGESTED (unverified) food spot: {s['name']} ({s['area']}) - {s['note']}"
+             for s in ai_data.get("food_spots", [])]
+    lines += [f"AI-SUGGESTED (unverified) sightseeing: {s['name']} ({s['area']}) - {s['note']}"
+              for s in ai_data.get("sightseeing", [])]
+    return "\n".join(lines)
+
+
+_TOOLS = [check_route_coverage, check_flight_delay_risk, find_flights, find_reference_flights,
+          find_hotels, check_destination_weather, find_food_and_sightseeing]
 _AGENT = None
 
 

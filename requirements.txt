@@ -16,3 +16,6 @@ flask
 torch
 joblib
 truststore
+markdown
+bleach
+httpx

@@ -26,6 +26,14 @@
       {% if is_admin %}
       <a href="{{ url_for('admin') }}" class="{{ 'active' if request.path == url_for('admin') }}">Admin</a>
       {% endif %}
+      <form method="post" action="{{ url_for('set_currency') }}" class="currency-form">
+        <input type="hidden" name="next" value="{{ request.path }}">
+        <select name="currency" onchange="this.form.submit()" title="Display currency">
+          {% for code, info in supported_currencies.items() %}
+          <option value="{{ code }}" {{ 'selected' if code == current_currency }}>{{ code }}</option>
+          {% endfor %}
+        </select>
+      </form>
       <span class="nav-user">Hi, {{ current_user_name.split(' ')[0] }}</span>
       <a href="{{ url_for('logout') }}" class="btn btn-ghost btn-sm">Log out</a>
     </div>

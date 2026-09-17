@@ -33,9 +33,14 @@ def predict_delay_probability(carrier_code: str, origin_airport: str, destinatio
                                weekday, month, scheduled_elapsed_time: float,
                                origin_temp_f: float, origin_precip_in: float, origin_pressure: float,
                                origin_visibility: float, origin_wind_speed: float,
-                               dest_temp_f: float, dest_precip_in: float, dest_pressure: float,
-                               dest_visibility: float, dest_wind_speed: float) -> float:
-    """Returns a probability in [0, 1] that the flight departs 15+ minutes late."""
+                               origin_temp_known: bool = True) -> float:
+    """Returns a probability in [0, 1] that the flight departs 15+ minutes late.
+
+    origin_temp_known should be False when origin_temp_f is a filled-in
+    placeholder rather than a real reading (e.g. India routes, which have no
+    temperature data at all - see clean_india_flights.py), so the model can
+    discount it instead of treating it as observed weather.
+    """
     encoder, model = _load()
     row = pd.DataFrame([{
         "carrier_code": str(carrier_code),
@@ -44,12 +49,10 @@ def predict_delay_probability(carrier_code: str, origin_airport: str, destinatio
         "weekday": str(weekday),
         "month": str(month),
         "scheduled_elapsed_time": scheduled_elapsed_time,
-        "origin_temp_f": origin_temp_f, "origin_precip_in": origin_precip_in,
+        "origin_temp_f": origin_temp_f, "origin_temp_known": int(bool(origin_temp_known)),
+        "origin_precip_in": origin_precip_in,
         "origin_pressure": origin_pressure, "origin_visibility": origin_visibility,
         "origin_wind_speed": origin_wind_speed,
-        "dest_temp_f": dest_temp_f, "dest_precip_in": dest_precip_in,
-        "dest_pressure": dest_pressure, "dest_visibility": dest_visibility,
-        "dest_wind_speed": dest_wind_speed,
     }])
     x_cat = torch.tensor(encoder.transform_cat(row))
     x_cont = torch.tensor(encoder.transform_cont(row))
@@ -75,16 +78,12 @@ if __name__ == "__main__":
         weekday="5", month="12", scheduled_elapsed_time=140,
         origin_temp_f=28, origin_precip_in=0.4, origin_pressure=29.5,
         origin_visibility=2.0, origin_wind_speed=22,
-        dest_temp_f=35, dest_precip_in=0.0, dest_pressure=30.1,
-        dest_visibility=10.0, dest_wind_speed=8,
     )
     p_clear_weather = predict_delay_probability(
         carrier_code="WN", origin_airport="ORD", destination_airport="LGA",
         weekday="5", month="12", scheduled_elapsed_time=140,
         origin_temp_f=45, origin_precip_in=0.0, origin_pressure=30.2,
         origin_visibility=10.0, origin_wind_speed=5,
-        dest_temp_f=45, dest_precip_in=0.0, dest_pressure=30.1,
-        dest_visibility=10.0, dest_wind_speed=5,
     )
     print(f"Bad weather scenario:  {p_bad_weather:.3f} ({risk_label(p_bad_weather)})")
     print(f"Clear weather scenario:{p_clear_weather:.3f} ({risk_label(p_clear_weather)})")

@@ -7,6 +7,13 @@ captured at BOTH the origin and destination airport at flight time
 (temperature, precipitation, pressure, visibility, wind), plus real delay
 causes and real calendar dates. This makes it the stronger candidate for
 the core disruption prediction model going forward.
+
+Destination-side weather (dest_*) is dropped from the final output even
+though this source has it, because the India data merged in alongside it
+(see clean_india_flights.py) only ever has a single origin-side weather
+snapshot per flight. Keeping the schemas aligned to the same origin-only
+feature set means no destination weather value is ever fabricated for the
+India rows - see build_unified_flight_dataset.py.
 """
 import pandas as pd
 import numpy as np
@@ -110,6 +117,12 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     df_flown["route"] = df_flown["origin_airport"].astype(str) + "-" + df_flown["destination_airport"].astype(str)
     if "delay_weather" in df_flown.columns:
         df_flown["weather_caused_delay"] = (pd.to_numeric(df_flown["delay_weather"], errors="coerce").fillna(0) > 0).astype(int)
+
+    # Real temperature is always present for this source (unlike the India data
+    # merged in later) - flag so the model can weight known vs unknown temperature.
+    df_flown["origin_temp_known"] = 1
+    drop_cols = [c for c in list(DEST_WEATHER_RENAME.values()) if c in df_flown.columns]
+    df_flown = df_flown.drop(columns=drop_cols)
 
     df_flown = df_flown.reset_index(drop=True)
 

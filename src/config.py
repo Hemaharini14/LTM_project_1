@@ -32,6 +32,19 @@ MONTHLY_FLIGHT_WEATHER_FILES = [
 MONTHLY_FLIGHT_WEATHER_PATHS = [os.path.join(DATA_DIR, f) for f in MONTHLY_FLIGHT_WEATHER_FILES]
 MONTHLY_FLIGHT_WEATHER_CLEAN_PATH = os.path.join(OUTPUT_DIR, "cleaned_flight_weather_2019.csv")
 
+# Real 2019/early-2020 India domestic flights (BLR/BOM/CCU/DEL/HYD) with a
+# single origin-side weather snapshot per flight (windspeed/precip/pressure/
+# visibility/cloudcover, no temperature, no destination-side weather) — see
+# clean_india_flights.py. Merged with the US data above (origin-weather
+# columns only, since that's the largest common feature set both sources
+# actually have real values for) into one unified training set.
+INDIA_FLIGHT_WEATHER_RAW_PATH = os.path.join(DATA_DIR, "Dataset.csv")
+INDIA_FLIGHT_WEATHER_CLEAN_PATH = os.path.join(OUTPUT_DIR, "cleaned_india_flights.csv")
+
+# Final unified table (US + India, origin-weather schema) that the model is
+# actually trained on — see build_unified_flight_dataset.py.
+UNIFIED_FLIGHT_WEATHER_CLEAN_PATH = os.path.join(OUTPUT_DIR, "cleaned_flight_weather_unified.csv")
+
 # GlobalWeatherRepository.csv — appears to be a rolling current-conditions
 # snapshot (has last_updated_epoch), NOT historical data matching the 2019
 # flights. Treated as a separate "live destination weather lookup" source

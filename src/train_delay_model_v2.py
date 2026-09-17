@@ -1,6 +1,6 @@
 """
-Trains DelayNetV2 on the cleaned flight+weather 2019 dataset
-(outputs/cleaned_flight_weather_2019.csv from clean_monthly_flights.py).
+Trains DelayNetV2 on the unified US+India flight+weather dataset
+(outputs/cleaned_flight_weather_unified.csv from build_unified_flight_dataset.py).
 
 Run: python train_delay_model_v2.py
 Outputs:
@@ -24,7 +24,7 @@ from sklearn.metrics import roc_auc_score, accuracy_score, classification_report
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from model_preprocessing import FlightWeatherEncoder, load_clean_flight_weather, CONT_COLS, TARGET_COL
 from delay_model_v2 import DelayNetV2
-from config import MONTHLY_FLIGHT_WEATHER_CLEAN_PATH, OUTPUT_DIR
+from config import UNIFIED_FLIGHT_WEATHER_CLEAN_PATH, OUTPUT_DIR
 
 ARTIFACT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "models", "artifacts")
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -37,7 +37,7 @@ SAMPLE_FRAC = 1.0
 def main(epochs: int = 8, batch_size: int = 4096, lr: float = 1e-3):
     print(f"Device: {DEVICE}")
     print("Loading cleaned flight+weather data...")
-    df = load_clean_flight_weather(MONTHLY_FLIGHT_WEATHER_CLEAN_PATH)
+    df = load_clean_flight_weather(UNIFIED_FLIGHT_WEATHER_CLEAN_PATH)
     print(f"Loaded {len(df):,} rows")
 
     missing_required = [c for c in CONT_COLS + [TARGET_COL] if c not in df.columns]

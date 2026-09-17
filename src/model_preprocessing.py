@@ -12,11 +12,16 @@ import os
 # Categorical fields -> each gets its own embedding table
 CAT_COLS = ["carrier_code", "origin_airport", "destination_airport", "weekday", "month"]
 
-# Continuous fields -> scaled (zero mean, unit std) and fed directly into the MLP
+# Continuous fields -> scaled (zero mean, unit std) and fed directly into the MLP.
+# Origin-side weather only: the India data merged in (see
+# clean_india_flights.py) has no destination-side weather at all, so
+# dest_* fields were dropped from the whole pipeline rather than faked.
+# origin_temp_known (1/0) rides alongside origin_temp_f so the model can
+# tell a real US reading apart from the India rows' filled-in placeholder.
 CONT_COLS = [
     "scheduled_elapsed_time",
-    "origin_temp_f", "origin_precip_in", "origin_pressure", "origin_visibility", "origin_wind_speed",
-    "dest_temp_f", "dest_precip_in", "dest_pressure", "dest_visibility", "dest_wind_speed",
+    "origin_temp_f", "origin_temp_known",
+    "origin_precip_in", "origin_pressure", "origin_visibility", "origin_wind_speed",
 ]
 
 TARGET_COL = "is_delayed"

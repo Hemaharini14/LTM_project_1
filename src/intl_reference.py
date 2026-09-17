@@ -1,6 +1,6 @@
 """
-Hand-curated public reference data for India/Singapore/Malaysia routes and
-famous food destinations - added because the trained delay-prediction
+Hand-curated public reference data for India/Singapore/Malaysia/UAE routes
+and famous food destinations - added because the trained delay-prediction
 model only knows 2019 US domestic flights and has zero signal for these
 countries. This is the same kind of well-known, verifiable public
 reference data as reference_data.py's airport-city map (real airports,
@@ -14,7 +14,8 @@ score attached to any of it.
 # Airports added beyond the trained dataset - used to extend the dropdown
 # and to tell "international, reference-only" apart from "no data at all".
 INTL_AIRPORT_CODES = {"DEL", "BOM", "BLR", "MAA", "CCU", "HYD", "COK", "GOI",
-                       "SIN", "KUL", "PEN", "LGK", "JHB", "BKI"}
+                       "CJB", "IXM", "TRZ", "IXE", "HBX", "VGA", "VTZ", "TIR",
+                       "SIN", "KUL", "PEN", "LGK", "JHB", "BKI", "DXB"}
 
 # Only these resolve against the live weather dataset (outputs/cleaned_global_weather.csv)
 # under this exact spelling - used to suggest a working destination_city value.
@@ -53,9 +54,63 @@ INTL_ROUTES = {
     ("PEN", "KUL"): [{"carrier": "MH", "typical_duration_min": 60, "typical_departure": "Afternoon"}],
     ("DEL", "BOM"): [{"carrier": "6E", "typical_duration_min": 130, "typical_departure": "Morning"},
                       {"carrier": "AI", "typical_duration_min": 135, "typical_departure": "Evening"},
-                      {"carrier": "UK", "typical_duration_min": 130, "typical_departure": "Afternoon"}],
+                      {"carrier": "QP", "typical_duration_min": 130, "typical_departure": "Afternoon"}],
     ("BOM", "DEL"): [{"carrier": "6E", "typical_duration_min": 130, "typical_departure": "Afternoon"},
                       {"carrier": "AI", "typical_duration_min": 135, "typical_departure": "Morning"}],
+
+    # --- Delhi <-> Tamil Nadu / Karnataka / Andhra Pradesh ---
+    ("DEL", "MAA"): [{"carrier": "AI", "typical_duration_min": 170, "typical_departure": "Morning"},
+                      {"carrier": "6E", "typical_duration_min": 170, "typical_departure": "Evening"}],
+    ("MAA", "DEL"): [{"carrier": "AI", "typical_duration_min": 175, "typical_departure": "Afternoon"},
+                      {"carrier": "6E", "typical_duration_min": 175, "typical_departure": "Morning"}],
+    ("DEL", "BLR"): [{"carrier": "AI", "typical_duration_min": 160, "typical_departure": "Morning"},
+                      {"carrier": "6E", "typical_duration_min": 160, "typical_departure": "Afternoon"},
+                      {"carrier": "QP", "typical_duration_min": 160, "typical_departure": "Evening"}],
+    ("BLR", "DEL"): [{"carrier": "AI", "typical_duration_min": 165, "typical_departure": "Morning"},
+                      {"carrier": "6E", "typical_duration_min": 165, "typical_departure": "Night"}],
+    ("DEL", "VTZ"): [{"carrier": "AI", "typical_duration_min": 150, "typical_departure": "Morning"},
+                      {"carrier": "6E", "typical_duration_min": 150, "typical_departure": "Afternoon"}],
+    ("VTZ", "DEL"): [{"carrier": "6E", "typical_duration_min": 155, "typical_departure": "Morning"}],
+
+    # --- Within/between Tamil Nadu, Karnataka, Andhra Pradesh ---
+    ("BLR", "MAA"): [{"carrier": "6E", "typical_duration_min": 60, "typical_departure": "Morning"},
+                      {"carrier": "AI", "typical_duration_min": 60, "typical_departure": "Evening"}],
+    ("MAA", "BLR"): [{"carrier": "6E", "typical_duration_min": 60, "typical_departure": "Afternoon"}],
+    ("BLR", "VGA"): [{"carrier": "6E", "typical_duration_min": 70, "typical_departure": "Morning"}],
+    ("VGA", "BLR"): [{"carrier": "6E", "typical_duration_min": 70, "typical_departure": "Evening"}],
+    ("MAA", "VTZ"): [{"carrier": "6E", "typical_duration_min": 80, "typical_departure": "Morning"},
+                      {"carrier": "SG", "typical_duration_min": 85, "typical_departure": "Afternoon"}],
+    ("VTZ", "MAA"): [{"carrier": "6E", "typical_duration_min": 80, "typical_departure": "Evening"}],
+    ("MAA", "CJB"): [{"carrier": "6E", "typical_duration_min": 60, "typical_departure": "Morning"},
+                      {"carrier": "AI", "typical_duration_min": 60, "typical_departure": "Evening"}],
+    ("CJB", "MAA"): [{"carrier": "6E", "typical_duration_min": 60, "typical_departure": "Afternoon"}],
+    ("BLR", "CJB"): [{"carrier": "6E", "typical_duration_min": 50, "typical_departure": "Morning"}],
+    ("CJB", "BLR"): [{"carrier": "6E", "typical_duration_min": 50, "typical_departure": "Evening"}],
+    ("BLR", "TIR"): [{"carrier": "6E", "typical_duration_min": 60, "typical_departure": "Morning"}],
+    ("TIR", "BLR"): [{"carrier": "6E", "typical_duration_min": 60, "typical_departure": "Afternoon"}],
+    ("MAA", "TIR"): [{"carrier": "6E", "typical_duration_min": 50, "typical_departure": "Morning"}],
+    ("TIR", "MAA"): [{"carrier": "6E", "typical_duration_min": 50, "typical_departure": "Evening"}],
+    ("MAA", "IXM"): [{"carrier": "6E", "typical_duration_min": 55, "typical_departure": "Morning"},
+                      {"carrier": "AI", "typical_duration_min": 55, "typical_departure": "Evening"}],
+    ("IXM", "MAA"): [{"carrier": "6E", "typical_duration_min": 55, "typical_departure": "Afternoon"}],
+    ("BLR", "IXE"): [{"carrier": "6E", "typical_duration_min": 60, "typical_departure": "Morning"}],
+    ("IXE", "BLR"): [{"carrier": "6E", "typical_duration_min": 60, "typical_departure": "Evening"}],
+    ("MAA", "TRZ"): [{"carrier": "6E", "typical_duration_min": 55, "typical_departure": "Morning"}],
+    ("TRZ", "MAA"): [{"carrier": "6E", "typical_duration_min": 55, "typical_departure": "Afternoon"}],
+
+    # --- Dubai <-> India (Emirates + IndiGo/Air India codeshare-served corridor) ---
+    ("DXB", "DEL"): [{"carrier": "EK", "typical_duration_min": 210, "typical_departure": "Morning"},
+                      {"carrier": "AI", "typical_duration_min": 215, "typical_departure": "Night"}],
+    ("DEL", "DXB"): [{"carrier": "EK", "typical_duration_min": 200, "typical_departure": "Afternoon"},
+                      {"carrier": "6E", "typical_duration_min": 200, "typical_departure": "Morning"}],
+    ("DXB", "BOM"): [{"carrier": "EK", "typical_duration_min": 190, "typical_departure": "Morning"},
+                      {"carrier": "6E", "typical_duration_min": 190, "typical_departure": "Evening"}],
+    ("BOM", "DXB"): [{"carrier": "EK", "typical_duration_min": 180, "typical_departure": "Afternoon"}],
+    ("DXB", "MAA"): [{"carrier": "EK", "typical_duration_min": 250, "typical_departure": "Morning"}],
+    ("MAA", "DXB"): [{"carrier": "EK", "typical_duration_min": 240, "typical_departure": "Night"}],
+    ("DXB", "BLR"): [{"carrier": "EK", "typical_duration_min": 240, "typical_departure": "Afternoon"},
+                      {"carrier": "6E", "typical_duration_min": 240, "typical_departure": "Morning"}],
+    ("BLR", "DXB"): [{"carrier": "EK", "typical_duration_min": 230, "typical_departure": "Evening"}],
 }
 
 
@@ -102,6 +157,20 @@ FOOD_SPOTS = {
     "chennai": [
         {"name": "Murugan Idli Shop", "area": "Multiple outlets", "note": "Iconic soft idlis and filter coffee"},
         {"name": "Marina Beach food stalls", "area": "Marina Beach", "note": "Sundal, sugarcane juice, evening snacks"},
+    ],
+    "coimbatore": [
+        {"name": "Annapoorna Restaurant", "area": "Multiple outlets", "note": "Long-running South Indian vegetarian institution"},
+        {"name": "RS Puram food street", "area": "RS Puram", "note": "Local snacks and tiffin stalls"},
+    ],
+    "madurai": [
+        {"name": "Murugan Idli Shop", "area": "Originated in Madurai", "note": "The original outlet of the famous idli chain"},
+        {"name": "Meenakshi Amman Temple street food", "area": "Temple area", "note": "Famous for jigarthanda, a Madurai specialty drink"},
+    ],
+    "vijayawada": [
+        {"name": "Minerva Coffee Shop", "area": "Multiple outlets", "note": "Well-known Andhra vegetarian chain, originated here"},
+    ],
+    "visakhapatnam": [
+        {"name": "Ramakrishna Beach (RK Beach) food stalls", "area": "RK Beach", "note": "Popular seaside snack stalls"},
     ],
     "kolkata": [
         {"name": "Park Street", "area": "Central Kolkata", "note": "Historic dining strip"},

@@ -3,7 +3,7 @@ Static public reference data (IATA carrier/airport codes -> human names).
 This is NOT derived from the project's private datasets - it's the same
 kind of lookup table any flight-booking UI ships with, used only to make
 codes readable in dropdowns. Only carriers that actually appear in
-outputs/cleaned_flight_weather_2019.csv are offered in the dropdown; the
+outputs/cleaned_flight_weather_unified.csv are offered in the dropdown; the
 airport map covers common US hubs and falls back to the raw code for the
 rest (there is no airport-name dataset in this project to draw from).
 """
@@ -30,12 +30,15 @@ CARRIER_NAMES = {
     # International (India / Singapore / Malaysia) - reference-only routes, see intl_reference.py
     "AI": "Air India",
     "6E": "IndiGo",
-    "UK": "Vistara",
+    "UK": "Vistara (merged into Air India, Nov 2024)",
     "SG": "SpiceJet",
+    "QP": "Akasa Air",
+    "G8": "GoAir (now Go First)",
     "SQ": "Singapore Airlines",
     "TR": "Scoot",
     "MH": "Malaysia Airlines",
     "AK": "AirAsia",
+    "EK": "Emirates",
 }
 
 AIRPORT_CITY = {
@@ -55,8 +58,13 @@ AIRPORT_CITY = {
     # International (reference-only routes, not in the trained dataset - see intl_reference.py)
     "DEL": "Delhi", "BOM": "Mumbai", "BLR": "Bengaluru", "MAA": "Chennai", "CCU": "Kolkata",
     "HYD": "Hyderabad", "COK": "Kochi", "GOI": "Goa",
+    # Tamil Nadu, Karnataka, Andhra Pradesh - reference-only, see intl_reference.py
+    "CJB": "Coimbatore", "IXM": "Madurai", "TRZ": "Tiruchirapalli",
+    "IXE": "Mangalore", "HBX": "Hubli",
+    "VGA": "Vijayawada", "VTZ": "Visakhapatnam", "TIR": "Tirupati",
     "SIN": "Singapore",
     "KUL": "Kuala Lumpur", "PEN": "Penang", "LGK": "Langkawi", "JHB": "Johor Bahru", "BKI": "Kota Kinabalu",
+    "DXB": "Dubai",
 }
 
 

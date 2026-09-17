@@ -14,7 +14,7 @@ import pandas as pd
 import numpy as np
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from config import HOTELS_CLEAN_PATH, MONTHLY_FLIGHT_WEATHER_CLEAN_PATH, WEATHER_CLEAN_PATH, OUTPUT_DIR
+from config import HOTELS_CLEAN_PATH, UNIFIED_FLIGHT_WEATHER_CLEAN_PATH, WEATHER_CLEAN_PATH, OUTPUT_DIR
 from predict_delay_v2 import predict_delay_probability, risk_label
 
 _FLIGHTS_DF = None
@@ -28,7 +28,7 @@ _DATASET_INDEX = None
 def _load_flights():
     global _FLIGHTS_DF
     if _FLIGHTS_DF is None:
-        _FLIGHTS_DF = pd.read_csv(MONTHLY_FLIGHT_WEATHER_CLEAN_PATH, low_memory=False)
+        _FLIGHTS_DF = pd.read_csv(UNIFIED_FLIGHT_WEATHER_CLEAN_PATH, low_memory=False)
     return _FLIGHTS_DF
 
 
@@ -52,8 +52,8 @@ def get_dataset_index() -> dict:
     flight+weather dataset, cached to a small JSON file after the first
     (slow, full-column) scan so the web app doesn't pay that cost on every
     restart. Used to tell a user honestly when a route/airport simply isn't
-    covered by this project's (2019 US domestic) data, instead of silently
-    returning a meaningless prediction for it.
+    covered by this project's trained data (2019 US domestic + real 2019/2020 India domestic
+    flights - see clean_india_flights.py), instead of silently returning a meaningless prediction for it.
     """
     global _DATASET_INDEX
     if _DATASET_INDEX is not None:
@@ -64,7 +64,7 @@ def get_dataset_index() -> dict:
             _DATASET_INDEX = json.load(f)
         return _DATASET_INDEX
 
-    cols = pd.read_csv(MONTHLY_FLIGHT_WEATHER_CLEAN_PATH, low_memory=False,
+    cols = pd.read_csv(UNIFIED_FLIGHT_WEATHER_CLEAN_PATH, low_memory=False,
                         usecols=["carrier_code", "origin_airport", "destination_airport"])
     airports = sorted(set(cols["origin_airport"].unique()) | set(cols["destination_airport"].unique()))
     carriers = sorted(cols["carrier_code"].unique())
@@ -79,6 +79,37 @@ def is_route_covered(origin_airport: str, destination_airport: str) -> bool:
     index = get_dataset_index()
     airports = set(index["airports"])
     return (origin_airport or "").upper() in airports and (destination_airport or "").upper() in airports
+
+
+def lookup_flight_by_number(carrier_code: str, flight_number: str) -> dict | None:
+    """
+    Looks up a real flight's route and typical duration by carrier + flight number, from
+    every 2019 occurrence of that flight in the training data. A flight number can recur many
+    times (different dates) but usually flies the same route, so this returns the most common
+    (origin, destination) pairing along with how many times it was actually observed - callers
+    should show that occurrence count so the user knows this is a real historical lookup, not a
+    live schedule. Returns None if this carrier+flight number was never seen.
+    """
+    df = _load_flights()
+    subset = df[
+        (df["carrier_code"] == (carrier_code or "").upper()) &
+        (df["flight_number"].astype(str) == str(flight_number).strip())
+    ]
+    if subset.empty:
+        return None
+
+    grouped = subset.groupby(["origin_airport", "destination_airport"]).agg(
+        scheduled_elapsed_time=("scheduled_elapsed_time", "median"),
+        occurrences=("scheduled_elapsed_time", "count"),
+    ).reset_index().sort_values("occurrences", ascending=False)
+    top = grouped.iloc[0]
+    return {
+        "origin_airport": top["origin_airport"],
+        "destination_airport": top["destination_airport"],
+        "scheduled_elapsed_time": round(float(top["scheduled_elapsed_time"])),
+        "occurrences": int(top["occurrences"]),
+        "total_seen": int(len(subset)),
+    }
 
 
 def search_alternative_flights(origin_airport: str, destination_airport: str,
@@ -109,12 +140,10 @@ def search_alternative_flights(origin_airport: str, destination_airport: str,
             carrier_code=row["carrier_code"], origin_airport=row["origin_airport"],
             destination_airport=row["destination_airport"], weekday=row["weekday"],
             month=row["month"], scheduled_elapsed_time=row["scheduled_elapsed_time"],
-            origin_temp_f=row["origin_temp_f"], origin_precip_in=row["origin_precip_in"],
+            origin_temp_f=row["origin_temp_f"], origin_temp_known=bool(row["origin_temp_known"]),
+            origin_precip_in=row["origin_precip_in"],
             origin_pressure=row["origin_pressure"], origin_visibility=row["origin_visibility"],
             origin_wind_speed=row["origin_wind_speed"],
-            dest_temp_f=row["dest_temp_f"], dest_precip_in=row["dest_precip_in"],
-            dest_pressure=row["dest_pressure"], dest_visibility=row["dest_visibility"],
-            dest_wind_speed=row["dest_wind_speed"],
         )
         options.append({
             "carrier": row["carrier_code"],
@@ -163,6 +192,10 @@ def search_hotel_options(nightly_budget: float, priority: str = "cost", top_n: i
             "room_type": row["reserved_room_type"],
             "median_nightly_rate_usd": round(float(row["median_adr"]), 2),
             "cancellation_rate": round(float(row["cancellation_rate"]), 3),
+            # Real, dataset-grounded stand-in for a "review": the share of past bookings of
+            # this tier that were NOT cancelled - a genuine reliability signal, not a fabricated
+            # guest opinion.
+            "reliability_pct": round((1 - float(row["cancellation_rate"])) * 100, 1),
         }
         for _, row in candidates.head(top_n).iterrows()
     ]

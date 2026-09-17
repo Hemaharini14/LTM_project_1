@@ -24,16 +24,23 @@
             {% endfor %}
           </select>
         </label>
+        <label>Flight number <span class="muted">(optional — looks up the route for you)</span>
+          <input type="text" name="flight_number" placeholder="e.g. 1234"
+                 value="{{ result.inputs.flight_number if result else '' }}">
+        </label>
         <label>Travel date
           <input type="date" name="travel_date" required
                  value="{{ result.inputs.travel_date if result else '' }}">
         </label>
-        <label>Origin airport <span class="muted">(pick from list or type a code)</span>
-          <input type="text" name="origin_airport" list="airport-list" maxlength="4" placeholder="e.g. LAX" required
+      </div>
+      <p class="dataset-note">Know your flight number? Fill it in above with the airline and we'll find the route automatically. Otherwise, enter the route manually below.</p>
+      <div class="form-grid">
+        <label>Origin airport <span class="muted">(skip if you gave a flight number)</span>
+          <input type="text" name="origin_airport" list="airport-list" maxlength="4" placeholder="e.g. LAX"
                  value="{{ result.inputs.origin_airport if result else '' }}">
         </label>
         <label>Destination airport
-          <input type="text" name="destination_airport" list="airport-list" maxlength="4" placeholder="e.g. SFO" required
+          <input type="text" name="destination_airport" list="airport-list" maxlength="4" placeholder="e.g. SFO"
                  value="{{ result.inputs.destination_airport if result else '' }}">
         </label>
         <label>Destination city <span class="muted">(for live weather)</span>
@@ -56,14 +63,6 @@
             <label>Visibility (mi) <input type="number" step="0.1" name="origin_visibility" value="{{ result.inputs.origin_visibility if result else 10 }}"></label>
             <label>Wind speed (mph) <input type="number" step="0.1" name="origin_wind_speed" value="{{ result.inputs.origin_wind_speed if result else 8 }}"></label>
           </fieldset>
-          <fieldset>
-            <legend>Destination</legend>
-            <label>Temp (°F) <input type="number" name="dest_temp_f" value="{{ result.inputs.dest_temp_f if result else 55 }}"></label>
-            <label>Precipitation (in) <input type="number" step="0.01" name="dest_precip_in" value="{{ result.inputs.dest_precip_in if result else 0 }}"></label>
-            <label>Pressure (inHg) <input type="number" step="0.01" name="dest_pressure" value="{{ result.inputs.dest_pressure if result else 29.9 }}"></label>
-            <label>Visibility (mi) <input type="number" step="0.1" name="dest_visibility" value="{{ result.inputs.dest_visibility if result else 10 }}"></label>
-            <label>Wind speed (mph) <input type="number" step="0.1" name="dest_wind_speed" value="{{ result.inputs.dest_wind_speed if result else 8 }}"></label>
-          </fieldset>
         </div>
       </details>
 
@@ -74,11 +73,13 @@
   {% if result and result.no_data %}
   <div class="panel result-panel">
     <h2>Result</h2>
+    {% if result.lookup_note %}<p class="dataset-note">{{ result.lookup_note }}</p>{% endif %}
     <div class="coverage-warning">
       We don't have any flight data covering <strong>{{ result.inputs.origin_airport }}</strong> or
       <strong>{{ result.inputs.destination_airport }}</strong> in our current database — it only
-      covers 2019 US domestic airports. We can't give you a real delay estimate for this route
-      (including international destinations, e.g. Singapore) without more data.
+      covers 2019 US domestic airports and real India domestic airports (BLR/BOM/CCU/DEL/HYD).
+      We can't give you a real delay estimate for this route (including cross-border international
+      destinations, e.g. Singapore) without more data.
       <br><br>
       If you can share a dataset that covers this route or country, pass it along and it can be
       wired into the model.
@@ -87,11 +88,8 @@
   {% elif result and result.reference_only %}
   <div class="panel result-panel">
     <h2>Result</h2>
-    <p class="dataset-note">
-      <strong>{{ result.inputs.origin_airport }} → {{ result.inputs.destination_airport }}</strong> isn't covered by the
-      trained delay-risk model (2019 US domestic flights only) — this is an international route. Showing typical
-      schedule info for reference only, with no delay-risk score.
-    </p>
+    {% if result.lookup_note %}<p class="dataset-note">{{ result.lookup_note }}</p>{% endif %}
+    <p class="dataset-note">International route — typical schedule shown for reference, no delay-risk score.</p>
     <div class="card-row">
       {% for f in result.reference_flights %}
       <div class="mini-card">
@@ -106,6 +104,7 @@
   {% elif result %}
   <div class="panel result-panel">
     <h2>Result</h2>
+    {% if result.lookup_note %}<p class="dataset-note">{{ result.lookup_note }}</p>{% endif %}
     <div class="risk-badge risk-{{ result.label|lower }}">
       <span class="risk-percent">{{ (result.probability * 100) | round(1) }}%</span>
       <span class="risk-label">{{ result.label }} risk</span>
@@ -123,11 +122,11 @@
       <form method="post" class="form-stack budget-subform">
         <input type="hidden" name="stage" value="recover">
         <div class="form-grid">
-          <label>Flight budget ($) <input type="number" name="flight_cost" value="150" min="0"></label>
-          <label>Hotel budget ($) <input type="number" name="hotel_cost" value="400" min="0"></label>
-          <label>Food budget ($) <input type="number" name="food_cost" value="250" min="0"></label>
-          <label>Transport budget ($) <input type="number" name="transport_cost" value="150" min="0"></label>
-          <label>Sightseeing budget ($) <input type="number" name="sightseeing_cost" value="150" min="0"></label>
+          <label>Flight budget (USD $) <input type="number" name="flight_cost" value="150" min="0"></label>
+          <label>Hotel budget (USD $) <input type="number" name="hotel_cost" value="400" min="0"></label>
+          <label>Food budget (USD $) <input type="number" name="food_cost" value="250" min="0"></label>
+          <label>Transport budget (USD $) <input type="number" name="transport_cost" value="150" min="0"></label>
+          <label>Sightseeing budget (USD $) <input type="number" name="sightseeing_cost" value="150" min="0"></label>
           <label>What matters most?
             <select name="priority">
               <option value="cost">Lowest cost</option>
@@ -147,7 +146,7 @@
 {% if recommendation %}
 <section class="panel recommendation-panel">
   <h2>Your alternative plan</h2>
-  <p class="recommendation-text">{{ recommendation.recommendation_text }}</p>
+  <div class="recommendation-text">{{ recommendation.recommendation_text | render_markdown | safe }}</div>
 
   {% if recommendation.alternative_flights %}
   <h3>Alternative flights</h3>
@@ -161,7 +160,7 @@
     </div>
     {% endfor %}
   </div>
-  <p class="dataset-note">Fare/price data isn't in the current flight dataset — only schedule and delay-risk. Share a fare dataset and pricing can be added here.</p>
+  <p class="dataset-note">No fare data available — schedule and delay-risk only.</p>
   {% endif %}
 
   {% if recommendation.hotel_options %}
@@ -170,12 +169,13 @@
     {% for h in recommendation.hotel_options %}
     <div class="mini-card">
       <strong>{{ h.hotel_type }}</strong> · Room {{ h.room_type }}
-      <span>${{ h.median_nightly_rate_usd }}/night · ${{ (h.median_nightly_rate_usd * recommendation.assumed_hotel_nights) | round(2) }} total</span>
-      <span class="muted">{{ (h.cancellation_rate * 100) | round(1) }}% historical cancellation</span>
+      <span>{{ h.median_nightly_rate_usd | money }}/night · {{ (h.median_nightly_rate_usd * recommendation.assumed_hotel_nights) | money }} total</span>
+      <span class="reliability-bar"><span class="reliability-fill" style="width: {{ h.reliability_pct }}%"></span></span>
+      <span class="muted">{{ h.reliability_pct }}% of past bookings kept (not cancelled)</span>
     </div>
     {% endfor %}
   </div>
-  <p class="dataset-note">The hotel dataset has price tiers by type/room only — no property names. Share a named-hotel dataset and specific hotels can be recommended here.</p>
+  <p class="dataset-note">Price tiers only — no property names in this dataset.</p>
   {% endif %}
 
   {% if recommendation.destination_weather %}
@@ -193,10 +193,10 @@
     <div class="budget-row">
       <span class="budget-cat">{{ cat.replace('_cost','')|capitalize }}</span>
       <div class="budget-track"><div class="budget-fill" style="width: {{ (recommendation.new_budget[cat] / recommendation.new_budget.total * 100) | round(1) }}%"></div></div>
-      <span class="budget-amount">${{ recommendation.new_budget[cat] }}</span>
+      <span class="budget-amount">{{ recommendation.new_budget[cat] | money }}</span>
     </div>
     {% endfor %}
-    <div class="budget-total">Total: ${{ recommendation.new_budget.total }}</div>
+    <div class="budget-total">Total: {{ recommendation.new_budget.total | money }}</div>
   </div>
   {% if recommendation.trim_log %}
   <ul class="trim-log">

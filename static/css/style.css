@@ -69,6 +69,12 @@ a { color: inherit; }
 }
 .nav-links a.active, .nav-links a:hover { color: #fff; border-bottom-color: var(--sunset); }
 .nav-user { color: #fff; opacity: 0.9; font-size: 0.9rem; }
+.currency-form { display: inline-flex; }
+.currency-form select {
+  background: rgba(255,255,255,0.15); color: #fff; border: 1px solid rgba(255,255,255,0.3);
+  border-radius: 999px; padding: 5px 10px; font-size: 0.82rem; cursor: pointer;
+}
+.currency-form select option { color: var(--ink); }
 
 /* ---------------------------------------------------------------- layout */
 
@@ -226,7 +232,18 @@ input:focus, select:focus { outline: none; border-color: var(--teal); box-shadow
 .panel h3 { color: var(--teal-deep); margin-bottom: 10px; }
 
 .recommendation-panel { margin-top: 24px; }
-.recommendation-text { background: var(--sand); border-radius: 12px; padding: 16px; line-height: 1.6; }
+.recommendation-text { background: var(--sand); border-radius: 12px; padding: 16px 20px; line-height: 1.6; }
+.recommendation-text > *:first-child { margin-top: 0; }
+.recommendation-text > *:last-child { margin-bottom: 0; }
+.recommendation-text h1, .recommendation-text h2, .recommendation-text h3, .recommendation-text h4 {
+  color: var(--teal-deep); margin: 14px 0 6px; font-size: 1rem;
+}
+.recommendation-text ul, .recommendation-text ol { margin: 6px 0; padding-left: 22px; }
+.recommendation-text li { margin-bottom: 4px; }
+.recommendation-text table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 0.9rem; }
+.recommendation-text th, .recommendation-text td { border: 1px solid var(--sand-dark); padding: 6px 10px; text-align: left; }
+.recommendation-text th { background: var(--sand-dark); color: var(--teal-deep); }
+.recommendation-text code { background: var(--sand-dark); padding: 1px 5px; border-radius: 4px; font-size: 0.85em; }
 
 /* ---------------------------------------------------------------- risk + cards */
 
@@ -255,6 +272,25 @@ input:focus, select:focus { outline: none; border-color: var(--teal); box-shadow
   font-size: 0.9rem;
 }
 .badge { align-self: flex-start; padding: 3px 10px; border-radius: 999px; font-size: 0.78rem; font-weight: 600; }
+
+.sub-heading { color: var(--teal-deep); margin: 8px 0 6px; font-size: 1rem; }
+
+/* ---------------------------------------------------------------- hotel cards */
+
+.hotel-estimate-card { gap: 8px; }
+.reliability-bar { background: var(--sand-dark); border-radius: 999px; height: 6px; overflow: hidden; }
+.reliability-fill { background: linear-gradient(90deg, var(--safe), #6fd19d); height: 100%; }
+
+.hotel-suggestion-card {
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.hotel-suggestion-card:hover { transform: translateY(-2px); }
+.hotel-suggestion-card.selected { border-color: var(--teal); background: var(--teal-light); }
+
+.hotel-suggestion-card { gap: 4px; }
+.hotel-map { width: 100%; height: 160px; border: none; border-radius: 8px; margin-top: 6px; }
 
 /* ---------------------------------------------------------------- budget bars */
 
@@ -311,13 +347,10 @@ input:focus, select:focus { outline: none; border-color: var(--teal); box-shadow
   line-height: 1.6;
 }
 .dataset-note {
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   color: var(--muted);
-  background: var(--sand);
-  border-left: 3px solid var(--sunset);
-  padding: 8px 12px;
-  border-radius: 6px;
-  margin: 8px 0 16px;
+  font-style: italic;
+  margin: 2px 0 14px;
 }
 
 /* ---------------------------------------------------------------- admin */

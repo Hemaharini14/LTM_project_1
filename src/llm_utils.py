@@ -8,8 +8,11 @@ Configure via .env (see .env.example) - pick one provider:
     LLM_PROVIDER=openai       OPENAI_API_KEY=sk-...          OPENAI_MODEL=gpt-4o-mini (default)
     LLM_PROVIDER=anthropic    ANTHROPIC_API_KEY=sk-ant-...   ANTHROPIC_MODEL=claude-sonnet-5 (default)
     LLM_PROVIDER=grok         GROK_API_KEY=xai-...           GROK_MODEL=grok-4 (default)
-Grok's API is OpenAI-compatible, so it's served via ChatOpenAI + a custom base_url
-rather than a separate SDK - no extra package needed.
+    LLM_PROVIDER=groq         GROQ_API_KEY=gsk_...           GROQ_MODEL=llama-3.3-70b-versatile (default)
+Grok (xAI, x.ai) and Groq (groq.com) are two different companies with similar
+names - check your key's prefix if unsure ("xai-" vs "gsk_"). Both APIs are
+OpenAI-compatible, so both are served via ChatOpenAI + a custom base_url
+rather than a separate SDK - no extra package needed for either.
 
 With no key configured, every caller falls back to a deterministic,
 template-based summary instead of failing - the web app always works,
@@ -48,10 +51,19 @@ def get_llm():
                                   timeout=12, max_retries=0)
         if provider == "grok" and os.getenv("GROK_API_KEY"):
             # xAI's Grok API is OpenAI-compatible - reuse ChatOpenAI pointed at api.x.ai.
+            # NOT the same service as Groq (groq.com) below - easy to mix up, different keys/endpoints.
             from langchain_openai import ChatOpenAI
             return ChatOpenAI(model=os.getenv("GROK_MODEL", "grok-4"),
                                api_key=os.getenv("GROK_API_KEY"),
                                base_url=os.getenv("GROK_BASE_URL", "https://api.x.ai/v1"),
+                               temperature=0.3, timeout=12, max_retries=0)
+        if provider == "groq" and os.getenv("GROQ_API_KEY"):
+            # Groq (groq.com) - fast-inference host for open models (Llama, etc). Also
+            # OpenAI-compatible. Keys look like "gsk_..." - that prefix means Groq, not xAI Grok.
+            from langchain_openai import ChatOpenAI
+            return ChatOpenAI(model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+                               api_key=os.getenv("GROQ_API_KEY"),
+                               base_url=os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
                                temperature=0.3, timeout=12, max_retries=0)
     except Exception as e:
         print(f"[llm_utils] LLM init failed, using deterministic narrative: {e}")
@@ -61,7 +73,8 @@ def get_llm():
 def llm_status() -> dict:
     """For the UI: is an LLM actually configured right now?"""
     provider = os.getenv("LLM_PROVIDER", "").lower()
-    key_present = bool(os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY") or os.getenv("GROK_API_KEY"))
+    key_present = bool(os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
+                       or os.getenv("GROK_API_KEY") or os.getenv("GROQ_API_KEY"))
     return {"configured": get_llm() is not None, "provider": provider or None, "key_present": key_present}
 
 
@@ -100,16 +113,20 @@ def narrate_trip_plan(inputs: dict, plan: dict) -> tuple[str, str]:
         return f"[LLM error: {e}] Falling back to raw data below.", "error-fallback"
 
 
-def suggest_food_and_sightseeing(destination_city: str) -> dict | None:
+def suggest_destination_content(destination_city: str) -> dict | None:
     """
     Fallback for destinations with no curated entry in intl_reference.py's
-    FOOD_SPOTS. Asks the configured LLM for well-known real food spots and
-    sightseeing highlights. This is genuinely different from every other
-    piece of data in this app: it is NOT grounded in a dataset, and an LLM
-    can be wrong about real places. Returns None if no LLM is configured or
-    the call/parse fails - callers must fall back to the generic template
-    in that case, and the UI must always label this output "AI-suggested,
-    unverified" rather than presenting it as checked data.
+    FOOD_SPOTS. Asks the configured LLM for well-known real food spots,
+    sightseeing highlights, AND named hotels people search for in the area.
+    This is genuinely different from every other piece of data in this app:
+    it is NOT grounded in a dataset, and an LLM can be wrong about real
+    places. Returns None if no LLM is configured or the call/parse fails -
+    callers must fall back to the generic template in that case, and the UI
+    must always label this output "AI-suggested, unverified" rather than
+    presenting it as checked data. Deliberately does NOT ask for prices,
+    photos, or reviews for the hotels - those would need to be fabricated
+    (an LLM can't know a real current rate, has no real photo, and has no
+    real guest's opinion), so we only ask for names/areas to search by.
     """
     llm = get_llm()
     if llm is None or not destination_city:
@@ -117,12 +134,13 @@ def suggest_food_and_sightseeing(destination_city: str) -> dict | None:
 
     from langchain_core.messages import SystemMessage, HumanMessage
     system = (
-        "You suggest well-known, real, verifiable food spots and sightseeing highlights for a "
-        "travel destination. Respond with ONLY compact JSON, no prose, no markdown fences, in "
-        'exactly this shape: {"food_spots": [{"name": str, "area": str, "note": str}, ...], '
-        '"sightseeing": [{"name": str, "area": str, "note": str}, ...]}. Give at most 4 items per '
-        "list. If you are not confident this is a real place or you don't have reliable knowledge "
-        'of it, return {"food_spots": [], "sightseeing": []} instead of guessing.'
+        "You suggest well-known, real, verifiable food spots, sightseeing highlights, and named "
+        "hotels for a travel destination. Respond with ONLY compact JSON, no prose, no markdown "
+        'fences, in exactly this shape: {"food_spots": [{"name": str, "area": str, "note": str}, '
+        '...], "sightseeing": [{"name": str, "area": str, "note": str}, ...], "hotels": '
+        '[{"name": str, "area": str, "note": str}, ...]}. Give at most 4 items per list, real '
+        "hotel brand/property names only (no price, no rating - you don't have reliable current "
+        "data for those). If you are not confident something is real, omit it rather than guessing."
     )
     try:
         result = llm.invoke([SystemMessage(content=system), HumanMessage(content=destination_city)])
@@ -132,7 +150,8 @@ def suggest_food_and_sightseeing(destination_city: str) -> dict | None:
         data = json.loads(text)
         if not isinstance(data, dict) or "food_spots" not in data or "sightseeing" not in data:
             return None
+        data.setdefault("hotels", [])
         return data
     except Exception as e:
-        print(f"[llm_utils] suggest_food_and_sightseeing failed, using generic template: {e}")
+        print(f"[llm_utils] suggest_destination_content failed, using generic template: {e}")
         return None
