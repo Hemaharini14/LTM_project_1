@@ -45,6 +45,13 @@ INDIA_FLIGHT_WEATHER_CLEAN_PATH = os.path.join(OUTPUT_DIR, "cleaned_india_flight
 # actually trained on — see build_unified_flight_dataset.py.
 UNIFIED_FLIGHT_WEATHER_CLEAN_PATH = os.path.join(OUTPUT_DIR, "cleaned_flight_weather_unified.csv")
 
+# Real historical average origin-airport-hourly-congestion, keyed by
+# "AIRPORT|HOUR" (plus a "__default__" overall-mean fallback), precomputed by
+# build_unified_flight_dataset.py so single ad-hoc predictions (predict_delay_v2.py)
+# can look up a real typical value instead of guessing when the caller doesn't
+# have an exact historical row to read it from directly.
+CONGESTION_LOOKUP_PATH = os.path.join(OUTPUT_DIR, "congestion_lookup.json")
+
 # GlobalWeatherRepository.csv — appears to be a rolling current-conditions
 # snapshot (has last_updated_epoch), NOT historical data matching the 2019
 # flights. Treated as a separate "live destination weather lookup" source

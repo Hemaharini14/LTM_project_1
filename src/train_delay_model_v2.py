@@ -40,7 +40,10 @@ def main(epochs: int = 8, batch_size: int = 4096, lr: float = 1e-3):
     df = load_clean_flight_weather(UNIFIED_FLIGHT_WEATHER_CLEAN_PATH)
     print(f"Loaded {len(df):,} rows")
 
-    missing_required = [c for c in CONT_COLS + [TARGET_COL] if c not in df.columns]
+    # route_frequency isn't a raw column - the encoder derives it from "route"
+    # at fit/transform time (see model_preprocessing.py) so it's exempt here.
+    required_cols = [c for c in CONT_COLS if c != "route_frequency"] + [TARGET_COL]
+    missing_required = [c for c in required_cols if c not in df.columns]
     if missing_required:
         raise ValueError(f"Required columns missing from cleaned data: {missing_required}. "
                           f"Did clean_monthly_flights.py run successfully?")

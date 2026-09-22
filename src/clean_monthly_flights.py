@@ -18,6 +18,7 @@ India rows - see build_unified_flight_dataset.py.
 import pandas as pd
 import numpy as np
 from config import MONTHLY_FLIGHT_WEATHER_PATHS, MONTHLY_FLIGHT_WEATHER_CLEAN_PATH
+from feature_engineering import add_calendar_features, add_origin_congestion
 
 ORIGIN_WEATHER_RENAME = {
     "STATION_x": "origin_station",
@@ -79,6 +80,11 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     for col in NUMERIC_WEATHER_COLS + ["departure_delay", "arrival_delay", "scheduled_elapsed_time"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Computed before the cancellation filter below so congestion reflects real
+    # total scheduled traffic (cancelled flights still occupied a scheduled slot).
+    df = add_calendar_features(df)
+    df = add_origin_congestion(df)
 
     before_cancel_split = len(df)
     if "cancelled_code" in df.columns:

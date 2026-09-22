@@ -17,6 +17,7 @@ inventing a number:
 """
 import pandas as pd
 from config import INDIA_FLIGHT_WEATHER_RAW_PATH, INDIA_FLIGHT_WEATHER_CLEAN_PATH
+from feature_engineering import add_calendar_features, add_origin_congestion
 
 # Real IATA carrier codes for the airline names as they appear in this file.
 AIRLINE_TO_CARRIER_CODE = {
@@ -80,6 +81,11 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
         "origin_wind_speed": pd.to_numeric(df["weather__hourly__windspeedKmph"], errors="coerce") * KMPH_TO_MPH,
     })
     out = out.dropna(subset=["carrier_code"])
+
+    # Computed before the cancellation filter below so congestion reflects real
+    # total scheduled traffic (cancelled flights still occupied a scheduled slot).
+    out = add_calendar_features(out)
+    out = add_origin_congestion(out)
 
     n_cancelled = int(out["is_cancelled"].sum())
     print(f"[clean_india_flights] Detected {n_cancelled:,} cancelled flights "
