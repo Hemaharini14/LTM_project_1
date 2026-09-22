@@ -13,6 +13,7 @@ Run from the project root:
 import os
 import sys
 import json
+import threading
 from datetime import date, datetime, timedelta
 from functools import wraps
 
@@ -64,6 +65,24 @@ app.jinja_env.filters["money"] = lambda usd: currency_utils.format_money(usd, se
 
 db.init_db()
 _recovery_app = build_graph()
+
+
+def _preload_flight_data():
+    """Pull the ~5M-row flight table into memory in the background at startup.
+
+    recovery_tools caches it after first use, but that first use was whoever
+    happened to click Plan or Recover first - they waited ~27s for a load that
+    has nothing to do with their request. Doing it here costs the same time
+    once, off the critical path, while the login page is already being served.
+    """
+    try:
+        from recovery_tools import _load_flights
+        _load_flights()
+    except Exception as e:
+        print(f"[api] flight-data preload failed, first request will load it: {e}")
+
+
+threading.Thread(target=_preload_flight_data, daemon=True).start()
 
 # Sign up (or already be registered) with one of these emails to get admin access.
 ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "aihemaharini@gmail.com").split(",")}

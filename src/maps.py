@@ -30,6 +30,12 @@ _HEADERS = {"User-Agent": "SmartRouteAI/1.0 (educational travel-planning project
 _last_call = 0.0
 _EARTH_RADIUS_KM = 6371.0
 
+# City coordinates don't change, and one plan can resolve the same place several
+# times over (the planner, then the transport comparison). Each miss costs an API
+# round-trip plus the 1.1s throttle, so caching hits removes both.
+_GEOCODE_CACHE: dict[tuple, dict] = {}
+_GEOCODE_CACHE_MAX = 512
+
 
 def _throttle():
     global _last_call
@@ -40,6 +46,9 @@ def _throttle():
 
 
 def _geocode_once(query: str, settlement_only: bool = False) -> dict | None:
+    key = (query.strip().lower(), settlement_only)
+    if key in _GEOCODE_CACHE:
+        return _GEOCODE_CACHE[key]
     _throttle()
     params = {"q": query, "format": "json", "limit": 1}
     if settlement_only:
@@ -48,8 +57,12 @@ def _geocode_once(query: str, settlement_only: bool = False) -> dict | None:
         r = httpx.get(_NOMINATIM_URL, params=params, headers=_HEADERS, timeout=10)
         data = r.json()
         if data:
-            return {"lat": float(data[0]["lat"]), "lon": float(data[0]["lon"]),
-                    "display_name": data[0]["display_name"]}
+            hit = {"lat": float(data[0]["lat"]), "lon": float(data[0]["lon"]),
+                   "display_name": data[0]["display_name"]}
+            if len(_GEOCODE_CACHE) >= _GEOCODE_CACHE_MAX:
+                _GEOCODE_CACHE.clear()
+            _GEOCODE_CACHE[key] = hit          # successes only; a failure may be transient
+            return hit
     except Exception:
         pass
     return None

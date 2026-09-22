@@ -67,6 +67,12 @@ def plan_budget_trip(
     days = max(int(days), 1)
     nights = max(days - 1, 1)
 
+    # The city picker submits a qualified label ("Chennai, TN, India"). The geocoding
+    # APIs want that full string, but the curated tables and the weather CSV key on a
+    # bare city name - passing the label made them all miss, which silently dropped
+    # curated food spots and fired the expensive LLM fallback instead.
+    city_key = (destination_city or "").split(",")[0].strip()
+
     # If the traveler typed a destination city but left the airport blank, auto-resolve
     # the nearest airport this project actually has real flight/hotel data for - real
     # great-circle distance among that finite known set (see maps.nearest_supported_airport),
@@ -124,23 +130,33 @@ def plan_budget_trip(
     hotel_reality_check = validate_hotel_budget(budget["hotel_cost"] or nightly_equivalent * nights, nights,
                                                  priority=optimize_priority)
 
-    weather = get_destination_weather(destination_city) if destination_city else None
+    weather = get_destination_weather(city_key) if city_key else None
 
     # How many real spots a day this pace actually schedules - drives both how many
     # we request and how the day plan below is filled.
     per_day = SPOTS_PER_DAY.get(sightseeing_level, 2)
 
-    # sightseeing_count matches what the day plan can actually use, so a packed trip
-    # doesn't run out of distinct real spots and start repeating.
-    ai_data = suggest_destination_content(destination_city, sightseeing_count=min(days * per_day, 40)) \
-        if destination_city else None
+    # The LLM is the LAST-RESORT source for food/sightseeing/hotels, so it must only
+    # run when a real source actually came up empty. Calling it up front cost ~9.5s on
+    # every single plan for a fallback that curated data, Geoapify and Foursquare
+    # usually make unnecessary. Lazy + memoised: at most one call, only if needed.
+    _ai_cache = {}
 
-    food_spots = food_spots_for(destination_city)
+    def ai_data():
+        if "v" not in _ai_cache:
+            _ai_cache["v"] = (suggest_destination_content(
+                destination_city, sightseeing_count=min(days * per_day, 40))
+                if destination_city else None)
+        return _ai_cache["v"]
+
+    food_spots = food_spots_for(city_key)
     food_source = "curated" if food_spots else "none"
-    if not food_spots and ai_data:
-        food_spots = ai_data.get("food_spots", [])
-        if food_spots:
-            food_source = "ai"
+    if not food_spots:
+        ai = ai_data()
+        if ai:
+            food_spots = ai.get("food_spots", [])
+            if food_spots:
+                food_source = "ai"
 
     # Capped so a long trip doesn't fire an oversized API request; Geoapify simply
     # returns fewer than asked if the city doesn't have that many real POIs.
@@ -153,10 +169,12 @@ def plan_budget_trip(
     _pool_common, _pool_hidden = split_common_and_hidden(_pool)
     sightseeing_spots = _pool_common + _pool_hidden
     sightseeing_source = "real" if sightseeing_spots else "none"
-    if not sightseeing_spots and ai_data:
-        sightseeing_spots = ai_data.get("sightseeing", [])
-        if sightseeing_spots:
-            sightseeing_source = "ai"
+    if not sightseeing_spots:
+        ai = ai_data()
+        if ai:
+            sightseeing_spots = ai.get("sightseeing", [])
+            if sightseeing_spots:
+                sightseeing_source = "ai"
 
     # Real named venues first (Foursquare: real name, address and coordinates), and
     # only fall back to the LLM's remembered property names - which can be wrong about
@@ -167,7 +185,8 @@ def plan_budget_trip(
     hotel_source = "real" if suggested_hotels else "none"
 
     if not suggested_hotels:
-        suggested_hotels_raw = (ai_data.get("hotels", []) if ai_data else [])[:3]
+        _ai = ai_data()
+        suggested_hotels_raw = (_ai.get("hotels", []) if _ai else [])[:3]
         hotel_source = "ai" if suggested_hotels_raw else "none"
         for h in suggested_hotels_raw:
             geo = geocode_hotel(h["name"], destination_city)
