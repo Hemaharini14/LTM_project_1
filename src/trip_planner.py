@@ -62,6 +62,7 @@ def plan_budget_trip(
     travel_comfort: str = "standard",
     food_comfort: str = "standard",
     sightseeing_level: str = "moderate",
+    transport_mode: str = "",
 ) -> dict:
     days = max(int(days), 1)
     nights = max(days - 1, 1)
@@ -209,11 +210,20 @@ def plan_budget_trip(
             default_morning, default_afternoon = template["morning"], template["afternoon"]
 
         if day_num == 1:
-            morning, afternoon, evening = "Arrive, transfer to hotel, check in", "Settle in, short neighborhood walk", dinner_line
+            arrive_line = ("Arrive by car, check in" if transport_mode == "car"
+                           else "Arrive, transfer to hotel, check in")
+            morning, afternoon, evening = arrive_line, "Settle in, short neighborhood walk", dinner_line
             spend = round(sightseeing_per_day / 2, 2)
         elif day_num == days:
             breakfast_line = f"Breakfast at {food_pick['name']}" if food_pick else "Breakfast, last-minute shopping"
-            morning, afternoon, evening = breakfast_line, "Check out, pack", "Transfer to airport for return flight"
+            # Wording has to match how they're actually travelling - telling a
+            # driver to transfer to the airport is the same mistake as showing
+            # them flight cards.
+            depart_line = {
+                "car": "Set off on the drive home",
+                "flight": "Transfer to airport for return flight",
+            }.get(transport_mode, "Head home")
+            morning, afternoon, evening = breakfast_line, "Check out, pack", depart_line
             spend = round(sightseeing_per_day / 2, 2)
         else:
             morning, afternoon = default_morning, default_afternoon

@@ -102,8 +102,12 @@ def _flight_option(origin_place: str, dest_place: str, weekday: int) -> dict:
     }
 
 
-def _unavailable(mode: str, reason: str) -> dict:
-    return {"mode": mode, "available": False, "note": reason}
+def _unavailable(mode: str, reason: str, unsupported: bool = False) -> dict:
+    """unsupported=True means this project has no data source for the mode at all,
+    as opposed to a mode we can price but that doesn't work for this particular
+    route. The UI hides the former (a permanent "no train data" card is noise on
+    every search) and shows the latter, which is real information about the trip."""
+    return {"mode": mode, "available": False, "unsupported": unsupported, "note": reason}
 
 
 def compare_transport_modes(origin_place: str, destination_place: str, weekday: int = 0) -> list[dict]:
@@ -122,10 +126,11 @@ def compare_transport_modes(origin_place: str, destination_place: str, weekday: 
     options.append(_flight_option(origin_place, destination_place, weekday))
     options.append(_unavailable(
         "train", "No rail timetable or fare data source is configured, so a train time "
-                 "or price here would be invented rather than looked up."))
+                 "or price here would be invented rather than looked up.", unsupported=True))
     options.append(_unavailable(
         "bus", "No coach timetable or fare data source is configured. Road routing can only "
-               "time a bus-sized vehicle driving the route, which is not a real bus service."))
+               "time a bus-sized vehicle driving the route, which is not a real bus service.",
+        unsupported=True))
     return options
 
 

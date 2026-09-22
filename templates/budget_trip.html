@@ -96,7 +96,7 @@
     <h2>How to get there</h2>
     <p class="muted">Pick a mode to continue to your full itinerary.</p>
     <div class="card-row">
-      {% for t in transport_options %}
+      {% for t in transport_options if not t.unsupported %}
       <div class="mini-card transport-card {{ 'transport-unavailable' if not t.available }}">
         <strong>{{ t.mode|capitalize }}</strong>
         {% if t.available %}

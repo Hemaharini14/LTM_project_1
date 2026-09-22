@@ -466,6 +466,7 @@ def budget_trip():
             travel_comfort=inputs["travel_comfort"],
             food_comfort=inputs["food_comfort"],
             sightseeing_level=inputs["sightseeing_level"],
+            transport_mode=inputs["transport_mode"],
         )
         plan["transport_mode"] = inputs["transport_mode"]
         # Real numbers for the mode actually chosen, so a traveller who picked the
