@@ -29,7 +29,7 @@ from predict_delay_v2 import predict_delay_probability, risk_label
 from recovery_graph import build_graph
 from recovery_tools import get_dataset_index, is_route_covered, lookup_flight_by_number
 from trip_planner import plan_budget_trip
-from transport_modes import compare_transport_modes
+from transport_modes import compare_transport_modes, describe_mode
 from maps import nearest_supported_airport
 from reference_data import carrier_label, airport_label, CARRIER_NAMES
 from intl_reference import INTL_AIRPORT_CODES, get_reference_flights
@@ -467,6 +467,12 @@ def budget_trip():
             sightseeing_level=inputs["sightseeing_level"],
         )
         plan["transport_mode"] = inputs["transport_mode"]
+        # Real numbers for the mode actually chosen, so a traveller who picked the
+        # car sees their drive rather than flights they never asked for.
+        if inputs["transport_mode"] and inputs["origin_place"] and inputs["destination_place"]:
+            plan["selected_transport"] = describe_mode(
+                inputs["origin_place"], inputs["destination_place"],
+                inputs["transport_mode"], start_date.weekday())
         if plan.get("auto_resolved_destination_airport"):
             inputs["destination_airport"] = plan["auto_resolved_destination_airport"]
         narrative, mode = narrate_trip_plan(inputs, plan)

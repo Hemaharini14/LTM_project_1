@@ -238,6 +238,7 @@ def plan_budget_trip(
         "route_reference": route_reference,
         "budget_breakdown": budget,
         "nights": nights,
+        "destination_geocoded": destination_geo is not None,
         "auto_resolved_destination_airport": auto_resolved["airport_code"] if auto_resolved else None,
         "destination_airport_transfer": destination_airport_transfer,
         "outbound_flights": outbound_flights,

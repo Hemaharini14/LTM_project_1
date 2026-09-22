@@ -183,6 +183,13 @@
     </div>
     {% endif %}
 
+    {% if form_data.destination_place and not plan.destination_geocoded %}
+    <div class="coverage-warning">
+      We couldn't find <strong>{{ form_data.destination_place }}</strong> as a town or city, so there's
+      no destination data below. Check the spelling — a missing space is the usual culprit
+      (<em>newyork</em> finds nothing, <em>New York</em> works).
+    </div>
+    {% endif %}
     {% if plan.auto_resolved_destination_airport %}
     <p class="dataset-note">No destination airport entered — auto-detected the nearest airport with real
       data as <strong>{{ plan.auto_resolved_destination_airport }}</strong> ({{ airport_label(plan.auto_resolved_destination_airport) }}).</p>
@@ -205,6 +212,28 @@
   <div class="recommendation-text">{{ plan.recommendation_text | render_markdown | safe }}</div>
   {% endif %}
 
+  {% if plan.selected_transport and plan.transport_mode != 'flight' %}
+  <h3>Getting there by {{ plan.transport_mode }}</h3>
+  {% set t = plan.selected_transport %}
+  {% if t.available %}
+  <div class="mini-card">
+    <span class="transport-time">{{ t.duration_hours }} h</span>
+    {% if t.distance_km %}<span class="muted">{{ t.distance_km }} km each way</span>{% endif %}
+    {% if t.estimated_cost_usd is not none %}
+    <span class="transport-cost">~{{ t.estimated_cost_usd | money }} each way</span>
+    <span class="muted">Estimate: {{ t.cost_basis }}</span>
+    {% endif %}
+    <span class="muted">{{ t.note }}</span>
+  </div>
+  {% else %}
+  <p class="muted">{{ t.note }}</p>
+  {% endif %}
+  {% endif %}
+
+  {# Only show flights to someone who actually chose to fly. Auto-generating a flight
+     itinerary for a traveller who picked the car is both noise and a false suggestion.
+     No mode at all = a saved/legacy plan, so keep the original behaviour. #}
+  {% if not plan.transport_mode or plan.transport_mode == 'flight' %}
   <h3>Outbound flight</h3>
   <div class="card-row">
     {% for f in plan.outbound_flights %}
@@ -245,6 +274,7 @@
   {% if (plan.outbound_flights or plan.return_flights) and plan.route_covered %}
   <p class="dataset-note">No fare data available — schedule and delay-risk only.</p>
   {% endif %}
+  {% endif %}{# end: flight sections shown only when flying #}
 
   <h3>Stay <span class="muted">({{ plan.nights }} night{{ 's' if plan.nights != 1 else '' }})</span></h3>
   {% if plan.hotel_options %}

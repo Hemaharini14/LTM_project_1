@@ -39,11 +39,13 @@ def _throttle():
     _last_call = time.monotonic()
 
 
-def _geocode_once(query: str) -> dict | None:
+def _geocode_once(query: str, settlement_only: bool = False) -> dict | None:
     _throttle()
+    params = {"q": query, "format": "json", "limit": 1}
+    if settlement_only:
+        params["featureType"] = "settlement"
     try:
-        r = httpx.get(_NOMINATIM_URL, params={"q": query, "format": "json", "limit": 1},
-                      headers=_HEADERS, timeout=10)
+        r = httpx.get(_NOMINATIM_URL, params=params, headers=_HEADERS, timeout=10)
         data = r.json()
         if data:
             return {"lat": float(data[0]["lat"]), "lon": float(data[0]["lon"]),
@@ -54,9 +56,12 @@ def _geocode_once(query: str) -> dict | None:
 
 
 def geocode_city(city: str) -> dict | None:
-    """Real (lat, lon) for a city name - shared by anything that needs to center a
-    search on a place (e.g. sightseeing.py's Geoapify radius search)."""
-    return _geocode_once(city)
+    """Real (lat, lon) for a CITY - restricted to populated places, because Nominatim
+    otherwise happily returns any business whose name matches. "newyork" (no space)
+    resolved to a hairdresser in Tokyo called NEWYORK, which then quietly planned a
+    trip to Japan. With featureType=settlement that query returns nothing instead,
+    and the caller can tell the traveller their place wasn't found."""
+    return _geocode_once(city, settlement_only=True)
 
 
 def geocode_hotel(hotel_name: str, destination_city: str) -> dict | None:
@@ -90,7 +95,7 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2 * _EARTH_RADIUS_KM * math.asin(math.sqrt(a))
 
 
-def nearest_supported_airport(place: str, allowed_codes) -> dict | None:
+def nearest_supported_airport(place: str, allowed_codes, max_distance_km: float = 500.0) -> dict | None:
     """Geocodes `place` (Nominatim - free, real) and returns the closest airport,
     by real great-circle distance, among `allowed_codes` (the finite set this
     project actually has flight/hotel data for - see reference_data.AIRPORT_CITY).
@@ -109,6 +114,15 @@ def nearest_supported_airport(place: str, allowed_codes) -> dict | None:
         km = _haversine_km(geo["lat"], geo["lon"], alat, alon)
         if best_km is None or km < best_km:
             best_code, best_km = code, km
+
+    # "Nearest" is only meaningful within a sane radius. This project covers ~80
+    # airports, so a place on a continent none of them are on would otherwise get
+    # confidently matched to something thousands of km away - a mis-geocoded
+    # "newyork" landed in Tokyo and picked Kota Kinabalu, 2,800 km off. Past the
+    # cap, say we have no airport for this place instead of inventing a connection.
+    if best_km is not None and best_km > max_distance_km:
+        return None
+
     return {"airport_code": best_code, "distance_km": round(best_km, 1),
             "place_lat": geo["lat"], "place_lon": geo["lon"], "place_name": geo["display_name"]}
 

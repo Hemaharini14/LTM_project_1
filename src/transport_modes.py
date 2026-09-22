@@ -129,6 +129,15 @@ def compare_transport_modes(origin_place: str, destination_place: str, weekday: 
     return options
 
 
+def describe_mode(origin_place: str, destination_place: str, mode: str, weekday: int = 0) -> dict | None:
+    """Just the one mode the traveller picked, so the itinerary can show its real
+    numbers (and so the plan doesn't show flights to someone who chose to drive)."""
+    for opt in compare_transport_modes(origin_place, destination_place, weekday):
+        if opt["mode"] == mode:
+            return opt
+    return None
+
+
 if __name__ == "__main__":
     for opt in compare_transport_modes("Bengaluru", "Chennai", weekday=2):
         if opt["available"]:
