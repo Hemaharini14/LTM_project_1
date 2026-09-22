@@ -27,6 +27,79 @@
 </div>
 
 <div class="panel" style="margin-top: 24px;">
+  <h2>Delay-prediction accuracy</h2>
+  {% if model_metrics %}
+  <p class="muted">Real held-out evaluation — {{ model_metrics.validation_size }} actual 2019/2020 flights the model
+    never trained on ({{ (model_metrics.actual_delay_rate * 100) | round(1) }}% of them actually delayed).
+    Last evaluated {{ model_metrics.evaluated_at[:10] }}. Run <code>python src/evaluate_delay_model_v2.py</code>
+    again after retraining to refresh these numbers.</p>
+  {% if model_metrics.calibrated %}
+  <p class="result-message safe">
+    The displayed percentage is calibrated — a flight shown as "22%" really did get delayed about 22% of the time
+    among real held-out flights with that score, not an inflated raw model score. Low/Moderate/High cutoffs below
+    are set against this real scale (see the calibration check table).
+  </p>
+  {% endif %}
+  <div class="stat-grid">
+    <div class="stat-tile"><span class="stat-number">{{ model_metrics.auc }}</span><span class="stat-tile-label">AUC (1.0 = perfect, 0.5 = coin flip)</span></div>
+    <div class="stat-tile"><span class="stat-number">{{ (model_metrics.at_recommended_threshold.recall * 100) | round(1) }}%</span><span class="stat-tile-label">Recall on real delays (catches this % of them)</span></div>
+    <div class="stat-tile"><span class="stat-number">{{ (model_metrics.at_recommended_threshold.precision * 100) | round(1) }}%</span><span class="stat-tile-label">Precision (this % of "flagged risky" were actually delayed)</span></div>
+    <div class="stat-tile"><span class="stat-number">{{ model_metrics.recommended_threshold }}</span><span class="stat-tile-label">Best real operating threshold (not 0.5)</span></div>
+  </div>
+  <p class="muted">Why not just show "accuracy @ 0.5"? Because only {{ (model_metrics.actual_delay_rate * 100) | round(1) }}%
+    of real flights are ever delayed, a threshold of 0.5 gets {{ (model_metrics.accuracy_at_default_threshold * 100) | round(1) }}%
+    accuracy mostly by predicting "on-time" for everything — it only catches
+    {{ (model_metrics.at_default_threshold.recall * 100) | round(1) }}% of real delays. The recall/precision
+    above use the threshold that actually balances catching real delays against false alarms.</p>
+
+  {% if model_metrics.calibration_buckets %}
+  <h4 class="sub-heading">Calibration check — does "X% risk" really mean X%?</h4>
+  <div class="admin-table-wrap">
+    <table class="admin-table">
+      <thead><tr><th>Shown risk</th><th># real flights</th><th>Actually delayed</th></tr></thead>
+      <tbody>
+        {% for b in model_metrics.calibration_buckets %}
+        <tr>
+          <td>{{ b.range }}</td>
+          <td>{{ b.count }}</td>
+          <td>{{ (b.actual_rate * 100) | round(1) if b.actual_rate is not none else '—' }}%</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if validation_examples %}
+  <h3 class="sub-heading">Predicted vs. actual on real past flights</h3>
+  <p class="muted">A fresh sample each page load, from the same real held-out set above — the model was never trained on these.</p>
+  <div class="admin-table-wrap">
+    <table class="admin-table">
+      <thead><tr><th>Route</th><th>Carrier</th><th>Predicted</th><th>Actual</th><th>Agrees?</th></tr></thead>
+      <tbody>
+        {% for v in validation_examples %}
+        <tr>
+          <td>{{ v.origin_airport }} → {{ v.destination_airport }}</td>
+          <td>{{ carrier_name(v.carrier_code) }}</td>
+          <td><span class="badge risk-{{ v.predicted_label|lower }}">{{ v.predicted_label }} ({{ (v.predicted_probability * 100) | round(1) }}%)</span></td>
+          <td>{{ v.actual_outcome }}</td>
+          <td><span class="admin-badge {{ 'yes' if v.agrees else 'no' }}">{{ '✓' if v.agrees else '✗' }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% else %}
+  <p class="result-message warn">
+    No real evaluation on record yet. Run <code>python src/evaluate_delay_model_v2.py</code> from the project root
+    (re-derives the model's held-out validation performance from real 2019/2020 flights without re-training) to
+    populate this section.
+  </p>
+  {% endif %}
+</div>
+
+<div class="panel" style="margin-top: 24px;">
   <h2>Users</h2>
   <div class="admin-table-wrap">
     <table class="admin-table">
