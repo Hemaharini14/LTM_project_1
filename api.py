@@ -30,6 +30,7 @@ from recovery_graph import build_graph
 from recovery_tools import get_dataset_index, is_route_covered, lookup_flight_by_number
 from trip_planner import plan_budget_trip
 from transport_modes import compare_transport_modes, describe_mode
+from places import autocomplete_places
 from maps import nearest_supported_airport
 from reference_data import carrier_label, airport_label, CARRIER_NAMES
 from intl_reference import INTL_AIRPORT_CODES, get_reference_flights
@@ -503,6 +504,14 @@ def admin():
     return render_template("admin.html", stats=stats, users=users, checks=checks, trips=trips,
                             llm=llm_status(), model_metrics=load_model_metrics(),
                             validation_examples=sample_validation_flights(6))
+
+
+@app.route("/api/places")
+@login_required
+def api_places():
+    """City suggestions for the trip form's location pickers. Cities only - see
+    places.autocomplete_places for why free text was a problem."""
+    return {"results": autocomplete_places(request.args.get("q", ""))}
 
 
 # ---------------------------------------------------------------- chatbot

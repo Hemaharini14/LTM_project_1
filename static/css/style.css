@@ -632,3 +632,15 @@ table.admin-table th { color: var(--teal-deep); font-weight: 600; }
 .transport-unavailable { opacity: 0.62; }
 .spot-list { margin: 0; padding-left: 18px; line-height: 1.6; font-size: 0.9rem; }
 .spot-list li { margin-bottom: 4px; }
+
+/* ------------------------------------------------- city autocomplete */
+.ac-wrap { position: relative; display: block; }
+.ac-list {
+  position: absolute; z-index: 40; top: 100%; left: 0; right: 0;
+  margin: 4px 0 0; padding: 4px; list-style: none;
+  background: #fff; border: 1px solid #dbe4e4; border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(15,102,116,0.18);
+  max-height: 240px; overflow-y: auto;
+}
+.ac-item { padding: 8px 10px; border-radius: 7px; cursor: pointer; font-size: 0.9rem; }
+.ac-item:hover, .ac-active { background: var(--teal-light); }

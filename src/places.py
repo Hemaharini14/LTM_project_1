@@ -38,6 +38,11 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from maps import osm_embed_url
 
 SEARCH_URL = "https://places-api.foursquare.com/places/search"
+# Geoapify's purpose-built geocoding autocomplete. Used instead of Nominatim
+# because Nominatim's usage policy explicitly forbids building autocomplete on
+# it, and because this one takes a type filter - which is what keeps a query
+# like "newyork" off a Tokyo hairdresser and on an actual city.
+AUTOCOMPLETE_URL = "https://api.geoapify.com/v1/geocode/autocomplete"
 # Foursquare pins behaviour to a dated API version; sending it explicitly keeps
 # the response shape stable instead of silently drifting when they ship changes.
 API_VERSION = "2025-06-17"
@@ -82,6 +87,36 @@ def _to_dict(place: dict, note: str) -> dict | None:
         "map_approximate": False,
         "source": "foursquare",
     }
+
+
+def autocomplete_places(query: str, limit: int = 6) -> list[dict]:
+    """City suggestions for a partial name, for the location pickers in the trip form.
+
+    type=city restricts results to actual settlements, so the traveller can only pick
+    a real city - they can no longer submit free text that resolves to a shop, which
+    is how a Boston -> "newyork" trip once ended up planned around Tokyo. Each result
+    carries its real coordinates, and the formatted label is unambiguous enough to
+    re-resolve cleanly downstream.
+    """
+    api_key = os.environ.get("GEOAPIFY_API_KEY")
+    query = (query or "").strip()
+    if not api_key or len(query) < 2:
+        return []
+    try:
+        resp = httpx.get(AUTOCOMPLETE_URL, params={
+            "text": query, "type": "city", "limit": limit, "apiKey": api_key,
+        }, timeout=8)
+        resp.raise_for_status()
+        out = []
+        for f in resp.json().get("features", []):
+            p = f.get("properties", {})
+            label = p.get("formatted")
+            if label:
+                out.append({"label": label, "lat": p.get("lat"), "lon": p.get("lon")})
+        return out
+    except Exception as e:
+        print(f"[places] autocomplete failed for '{query}': {e}")
+        return []
 
 
 def find_real_hotels(city: str, limit: int = 4) -> list[dict]:

@@ -18,11 +18,13 @@
       <input type="hidden" name="stage" value="{{ 'plan' if form_data.transport_mode else 'compare' }}">
       <div class="form-grid">
         <label>Starting location
-          <input type="text" name="origin_place" placeholder="e.g. Bengaluru" required
+          <input type="text" name="origin_place" placeholder="Start typing a city..." required
+                 data-place-autocomplete
                  value="{{ form_data.origin_place or '' }}">
         </label>
         <label>Trip location
-          <input type="text" name="destination_place" placeholder="e.g. Chennai" required
+          <input type="text" name="destination_place" placeholder="Start typing a city..." required
+                 data-place-autocomplete
                  value="{{ form_data.destination_place or '' }}">
         </label>
         <label>Origin airport <span class="muted">(optional — auto-detected from your starting location)</span>
@@ -34,7 +36,8 @@
                  value="{{ form_data.destination_airport or '' }}">
         </label>
         <label>Destination city <span class="muted">(for live weather, and to auto-find the nearest airport)</span>
-          <input type="text" name="destination_city" placeholder="e.g. New York"
+          <input type="text" name="destination_city" placeholder="Defaults to your trip location"
+                 data-place-autocomplete
                  value="{{ form_data.destination_city or '' }}">
         </label>
         <label>Start date
@@ -372,4 +375,8 @@
   </div>
 </section>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/place-autocomplete.js') }}"></script>
 {% endblock %}
