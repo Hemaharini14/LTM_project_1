@@ -38,17 +38,20 @@ except ImportError:
 load_dotenv()
 
 
-def get_llm():
+def get_llm(timeout: int = 12, max_retries: int = 0):
+    """timeout is per HTTP call. The default suits a single narration call; the recovery
+    agent (recovery_graph.py) passes a longer one because a ReAct loop makes several
+    sequential calls and a 12s cap made the whole plan fall back on one slow response."""
     provider = os.getenv("LLM_PROVIDER", "").lower()
     try:
         if provider == "openai" and os.getenv("OPENAI_API_KEY"):
             from langchain_openai import ChatOpenAI
             return ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"), temperature=0.3,
-                               timeout=12, max_retries=0)
+                               timeout=timeout, max_retries=max_retries)
         if provider == "anthropic" and os.getenv("ANTHROPIC_API_KEY"):
             from langchain_anthropic import ChatAnthropic
             return ChatAnthropic(model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5"), temperature=0.3,
-                                  timeout=12, max_retries=0)
+                                  timeout=timeout, max_retries=max_retries)
         if provider == "grok" and os.getenv("GROK_API_KEY"):
             # xAI's Grok API is OpenAI-compatible - reuse ChatOpenAI pointed at api.x.ai.
             # NOT the same service as Groq (groq.com) below - easy to mix up, different keys/endpoints.
@@ -56,7 +59,7 @@ def get_llm():
             return ChatOpenAI(model=os.getenv("GROK_MODEL", "grok-4"),
                                api_key=os.getenv("GROK_API_KEY"),
                                base_url=os.getenv("GROK_BASE_URL", "https://api.x.ai/v1"),
-                               temperature=0.3, timeout=12, max_retries=0)
+                               temperature=0.3, timeout=timeout, max_retries=max_retries)
         if provider == "groq" and os.getenv("GROQ_API_KEY"):
             # Groq (groq.com) - fast-inference host for open models (Llama, etc). Also
             # OpenAI-compatible. Keys look like "gsk_..." - that prefix means Groq, not xAI Grok.
@@ -64,7 +67,7 @@ def get_llm():
             return ChatOpenAI(model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
                                api_key=os.getenv("GROQ_API_KEY"),
                                base_url=os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
-                               temperature=0.3, timeout=12, max_retries=0)
+                               temperature=0.3, timeout=timeout, max_retries=max_retries)
     except Exception as e:
         print(f"[llm_utils] LLM init failed, using deterministic narrative: {e}")
     return None
@@ -80,7 +83,7 @@ def llm_status() -> dict:
 
 def narrate_trip_plan(inputs: dict, plan: dict) -> tuple[str, str]:
     """Returns (narrative_text, mode) for the budget trip planner, mirroring
-    recovery_graph.generate_recommendation_node's grounded-narration pattern."""
+    recovery_graph.py's grounded-narration pattern (real data in, narration out)."""
     llm = get_llm()
     best_out = plan["outbound_flights"][0] if plan.get("outbound_flights") else None
     best_ret = plan["return_flights"][0] if plan.get("return_flights") else None
@@ -113,20 +116,26 @@ def narrate_trip_plan(inputs: dict, plan: dict) -> tuple[str, str]:
         return f"[LLM error: {e}] Falling back to raw data below.", "error-fallback"
 
 
-def suggest_destination_content(destination_city: str) -> dict | None:
+def suggest_destination_content(destination_city: str, sightseeing_count: int = 4) -> dict | None:
     """
     Fallback for destinations with no curated entry in intl_reference.py's
-    FOOD_SPOTS. Asks the configured LLM for well-known real food spots,
-    sightseeing highlights, AND named hotels people search for in the area.
-    This is genuinely different from every other piece of data in this app:
-    it is NOT grounded in a dataset, and an LLM can be wrong about real
-    places. Returns None if no LLM is configured or the call/parse fails -
-    callers must fall back to the generic template in that case, and the UI
-    must always label this output "AI-suggested, unverified" rather than
-    presenting it as checked data. Deliberately does NOT ask for prices,
-    photos, or reviews for the hotels - those would need to be fabricated
-    (an LLM can't know a real current rate, has no real photo, and has no
-    real guest's opinion), so we only ask for names/areas to search by.
+    FOOD_SPOTS or no real Geoapify sightseeing data (sightseeing.py). Asks the
+    configured LLM for well-known real food spots, sightseeing highlights, AND
+    named hotels people search for in the area. This is genuinely different
+    from every other piece of data in this app: it is NOT grounded in a
+    dataset, and an LLM can be wrong about real places. Returns None if no LLM
+    is configured or the call/parse fails - callers must fall back to the
+    generic template in that case, and the UI must always label this output
+    "AI-suggested, unverified" rather than presenting it as checked data.
+    Deliberately does NOT ask for prices, photos, or reviews for the hotels -
+    those would need to be fabricated (an LLM can't know a real current rate,
+    has no real photo, and has no real guest's opinion), so we only ask for
+    names/areas to search by.
+
+    sightseeing_count: raise this for a multi-day trip so the day-by-day plan
+    (trip_planner.py) doesn't run out of distinct real spots and start
+    repeating after 2 days - the model is told to still omit rather than pad
+    with guesses if it doesn't actually know that many.
     """
     llm = get_llm()
     if llm is None or not destination_city:
@@ -138,9 +147,11 @@ def suggest_destination_content(destination_city: str) -> dict | None:
         "hotels for a travel destination. Respond with ONLY compact JSON, no prose, no markdown "
         'fences, in exactly this shape: {"food_spots": [{"name": str, "area": str, "note": str}, '
         '...], "sightseeing": [{"name": str, "area": str, "note": str}, ...], "hotels": '
-        '[{"name": str, "area": str, "note": str}, ...]}. Give at most 4 items per list, real '
-        "hotel brand/property names only (no price, no rating - you don't have reliable current "
-        "data for those). If you are not confident something is real, omit it rather than guessing."
+        '[{"name": str, "area": str, "note": str}, ...]}. Give at most 4 food/hotel items each, and '
+        f"up to {sightseeing_count} sightseeing items ONLY IF you genuinely know that many distinct "
+        "real ones - fewer genuine items is always better than padding the list. Real hotel "
+        "brand/property names only (no price, no rating - you don't have reliable current data for "
+        "those). If you are not confident something is real, omit it rather than guessing."
     )
     try:
         result = llm.invoke([SystemMessage(content=system), HumanMessage(content=destination_city)])

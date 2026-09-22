@@ -81,6 +81,16 @@ def is_route_covered(origin_airport: str, destination_airport: str) -> bool:
     return (origin_airport or "").upper() in airports and (destination_airport or "").upper() in airports
 
 
+def get_carriers_for_route(origin_airport: str, destination_airport: str) -> list[str]:
+    """Real carrier codes that actually have historical flights on this exact route -
+    not just individually-covered airports (a route between two covered airports may
+    still have zero real flights, e.g. never-observed pairings)."""
+    df = _load_flights()
+    subset = df[(df["origin_airport"] == (origin_airport or "").upper()) &
+                (df["destination_airport"] == (destination_airport or "").upper())]
+    return sorted(subset["carrier_code"].unique().tolist())
+
+
 def lookup_flight_by_number(carrier_code: str, flight_number: str) -> dict | None:
     """
     Looks up a real flight's route and typical duration by carrier + flight number, from
@@ -110,6 +120,36 @@ def lookup_flight_by_number(carrier_code: str, flight_number: str) -> dict | Non
         "occurrences": int(top["occurrences"]),
         "total_seen": int(len(subset)),
     }
+
+
+def _aggregate_by_flight(options: list[dict]) -> list[dict]:
+    """The sampled pool is historical ROWS, so the same real flight (same carrier +
+    number + route) usually appears several times on different dates, each with its
+    own recorded weather and therefore its own delay score. Returned as-is that shows
+    the traveler three identical-looking cards with three different percentages.
+
+    Collapse them to one entry per real flight and average the score across its real
+    occurrences: keeping the single best instance instead would be cherry-picking that
+    flight's luckiest day and would systematically understate the risk. occurrences is
+    carried through so callers can show how much real history backs the number, same as
+    lookup_flight_by_number does.
+    """
+    groups = {}
+    for o in options:
+        key = (o["carrier"], o["flight_number"], o["route"])
+        groups.setdefault(key, []).append(o)
+
+    merged = []
+    for rows in groups.values():
+        base = dict(rows[0])
+        mean_prob = sum(r["delay_probability"] for r in rows) / len(rows)
+        base["delay_probability"] = round(mean_prob, 3)
+        base["risk_label"] = risk_label(mean_prob)
+        base["scheduled_elapsed_time"] = int(
+            sorted(r["scheduled_elapsed_time"] for r in rows)[len(rows) // 2])
+        base["occurrences"] = len(rows)
+        merged.append(base)
+    return merged
 
 
 def search_alternative_flights(origin_airport: str, destination_airport: str,
@@ -144,10 +184,16 @@ def search_alternative_flights(origin_airport: str, destination_airport: str,
             origin_precip_in=row["origin_precip_in"],
             origin_pressure=row["origin_pressure"], origin_visibility=row["origin_visibility"],
             origin_wind_speed=row["origin_wind_speed"],
+            # Real per-row values (not defaults/lookups) since we have the actual
+            # historical record - see predict_delay_probability's docstring.
+            scheduled_hour=int(row["scheduled_hour"]), is_holiday=bool(row["is_holiday"]),
+            origin_hourly_congestion=row["origin_hourly_congestion"],
         )
+        fn = row.get("flight_number", "")
         options.append({
             "carrier": row["carrier_code"],
-            "flight_number": str(row.get("flight_number", "")),
+            # stored as a float in the CSV, so a bare str() renders "403.0"
+            "flight_number": str(int(fn)) if pd.notna(fn) and str(fn).replace(".", "").isdigit() else str(fn),
             "route": row["route"],
             "departure_time": str(row["scheduled_departure_dt"])[11:16] if pd.notna(row.get("scheduled_departure_dt")) else None,
             "arrival_time": str(row["scheduled_arrival_dt"])[11:16] if pd.notna(row.get("scheduled_arrival_dt")) else None,
@@ -155,6 +201,8 @@ def search_alternative_flights(origin_airport: str, destination_airport: str,
             "delay_probability": round(prob, 3),
             "risk_label": risk_label(prob),
         })
+
+    options = _aggregate_by_flight(options)
 
     if priority == "time":
         options.sort(key=lambda o: (o["delay_probability"], o["scheduled_elapsed_time"]))
@@ -166,15 +214,43 @@ def search_alternative_flights(origin_airport: str, destination_airport: str,
     return options[:top_n]
 
 
-def search_hotel_options(nightly_budget: float, priority: str = "cost", top_n: int = 5) -> list[dict]:
-    """Recommends hotel/room-type tiers using real ADR distributions."""
+def _hotel_tier_groups():
+    """Every real hotel/room-type tier with enough bookings (>=30) to trust its median -
+    shared by search_hotel_options (pre-filtered by a guessed nightly budget) and
+    itinerary_optimizer.py (which searches ALL real tiers against the actual total
+    budget constraint directly, rather than a pre-filtered guess)."""
     df = _load_hotels()
     grouped = df.groupby(["hotel", "reserved_room_type"]).agg(
         median_adr=("adr", "median"),
         cancellation_rate=("is_canceled", "mean"),
         n_bookings=("adr", "count"),
     ).reset_index()
-    grouped = grouped[grouped["n_bookings"] >= 30]
+    return grouped[grouped["n_bookings"] >= 30]
+
+
+def _hotel_row_to_dict(row) -> dict:
+    return {
+        "hotel_type": row["hotel"],
+        "room_type": row["reserved_room_type"],
+        "median_nightly_rate_usd": round(float(row["median_adr"]), 2),
+        "cancellation_rate": round(float(row["cancellation_rate"]), 3),
+        # Real, dataset-grounded stand-in for a "review": the share of past bookings of
+        # this tier that were NOT cancelled - a genuine reliability signal, not a fabricated
+        # guest opinion.
+        "reliability_pct": round((1 - float(row["cancellation_rate"])) * 100, 1),
+    }
+
+
+def get_all_hotel_tiers() -> list[dict]:
+    """Every real hotel tier, unfiltered by any guessed budget - for itinerary_optimizer.py
+    to search against the traveler's actual total budget constraint directly."""
+    grouped = _hotel_tier_groups()
+    return [_hotel_row_to_dict(row) for _, row in grouped.iterrows()]
+
+
+def search_hotel_options(nightly_budget: float, priority: str = "cost", top_n: int = 5) -> list[dict]:
+    """Recommends hotel/room-type tiers using real ADR distributions."""
+    grouped = _hotel_tier_groups()
 
     if priority == "cost":
         candidates = grouped[grouped["median_adr"] <= nightly_budget * 1.1].sort_values("median_adr")
@@ -186,19 +262,7 @@ def search_hotel_options(nightly_budget: float, priority: str = "cost", top_n: i
     if candidates.empty:
         candidates = grouped.sort_values("median_adr")
 
-    return [
-        {
-            "hotel_type": row["hotel"],
-            "room_type": row["reserved_room_type"],
-            "median_nightly_rate_usd": round(float(row["median_adr"]), 2),
-            "cancellation_rate": round(float(row["cancellation_rate"]), 3),
-            # Real, dataset-grounded stand-in for a "review": the share of past bookings of
-            # this tier that were NOT cancelled - a genuine reliability signal, not a fabricated
-            # guest opinion.
-            "reliability_pct": round((1 - float(row["cancellation_rate"])) * 100, 1),
-        }
-        for _, row in candidates.head(top_n).iterrows()
-    ]
+    return [_hotel_row_to_dict(row) for _, row in candidates.head(top_n).iterrows()]
 
 
 def get_destination_weather(location_name: str) -> dict | None:
