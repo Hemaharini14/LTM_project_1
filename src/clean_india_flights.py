@@ -97,6 +97,18 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     removed_no_delay_value = before_delay_drop - len(out)
 
     out["is_delayed"] = (out["departure_delay"] > DELAY_THRESHOLD_MINUTES).astype(int)
+
+    # This source has no tail numbers and no destination weather, so the rotation
+    # and dest-weather features genuinely cannot be computed. Flag them unknown
+    # rather than inventing values - build_unified_flight_dataset fills the
+    # numeric side with the known-rows mean, which scales to a neutral 0.
+    out["leg_of_day"] = 0
+    out["scheduled_turnaround_min"] = pd.NA
+    out["prev_leg_arrival_delay"] = 0.0
+    out["prev_leg_known"] = 0
+    out["dest_weather_known"] = 0
+    for c in ["dest_temp_f", "dest_precip_in", "dest_pressure", "dest_visibility", "dest_wind_speed"]:
+        out[c] = pd.NA
     out["route"] = out["origin_airport"] + "-" + out["destination_airport"]
     out["flight_number"] = ""
 

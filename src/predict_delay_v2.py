@@ -78,7 +78,11 @@ def predict_delay_probability(carrier_code: str, origin_airport: str, destinatio
                                origin_visibility: float, origin_wind_speed: float,
                                origin_temp_known: bool = True,
                                scheduled_hour: int = 12, is_holiday: bool = False,
-                               origin_hourly_congestion: float | None = None) -> float:
+                               origin_hourly_congestion: float | None = None,
+                               prev_leg_arrival_delay: float | None = None,
+                               leg_of_day: int | None = None,
+                               scheduled_turnaround_min: float | None = None,
+                               dest_weather: dict | None = None) -> float:
     """Returns a probability in [0, 1] that the flight departs 15+ minutes late.
 
     origin_temp_known should be False when origin_temp_f is a filled-in
@@ -99,6 +103,37 @@ def predict_delay_probability(carrier_code: str, origin_airport: str, destinatio
     if origin_hourly_congestion is None:
         origin_hourly_congestion = _typical_congestion(str(origin_airport).upper(), int(scheduled_hour))
     is_weekend = 1 if int(weekday) in (5, 6) else 0
+
+    # Features added with the aircraft-rotation work. A caller checking a flight in
+    # advance cannot know how late the inbound aircraft ran, so these default to
+    # "unknown" rather than to a value that reads as good news.
+    #
+    # prev_leg_known=0 is paired with leg_of_day=0 deliberately: in training those
+    # always co-occur (no prior leg IS the first leg of the day), so serving them
+    # together keeps us on distributions the model actually saw. Passing a real
+    # leg_of_day while claiming the prior leg is unknown would be a combination that
+    # never appears in training - exactly the kind of mismatch that made
+    # origin_temp_known produce wildly different scores for identical input.
+    prev_leg_known = 1 if prev_leg_arrival_delay is not None else 0
+    feats = {
+        "prev_leg_arrival_delay": float(prev_leg_arrival_delay or 0.0),
+        "prev_leg_known": prev_leg_known,
+        "leg_of_day": int(leg_of_day) if leg_of_day is not None else (0 if not prev_leg_known else 1),
+    }
+    dest_weather = dest_weather or {}
+    feats["dest_weather_known"] = 1 if dest_weather else 0
+
+    # Anything still unknown is filled with the encoder's own training mean for that
+    # column, which the same encoder then scales to exactly 0 - "no signal" - instead
+    # of a made-up reading. The *_known flags above tell the model which rows those are.
+    for col, supplied in [("scheduled_turnaround_min", scheduled_turnaround_min),
+                          ("dest_temp_f", dest_weather.get("temp_f")),
+                          ("dest_precip_in", dest_weather.get("precip_in")),
+                          ("dest_pressure", dest_weather.get("pressure")),
+                          ("dest_visibility", dest_weather.get("visibility")),
+                          ("dest_wind_speed", dest_weather.get("wind_speed"))]:
+        feats[col] = float(supplied) if supplied is not None else encoder.cont_mean.get(col, 0.0)
+
     row = pd.DataFrame([{
         "carrier_code": str(carrier_code),
         "origin_airport": str(origin_airport),
@@ -113,6 +148,7 @@ def predict_delay_probability(carrier_code: str, origin_airport: str, destinatio
         "origin_wind_speed": origin_wind_speed,
         "is_weekend": is_weekend, "is_holiday": int(bool(is_holiday)),
         "origin_hourly_congestion": origin_hourly_congestion,
+        **feats,
     }])
     x_cat = torch.tensor(encoder.transform_cat(row))
     x_cont = torch.tensor(encoder.transform_cont(row))

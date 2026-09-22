@@ -24,7 +24,18 @@ SHARED_COLS = [
     "origin_temp_f", "origin_temp_known", "origin_precip_in", "origin_pressure",
     "origin_visibility", "origin_wind_speed", "is_delayed", "route", "flight_number",
     "scheduled_hour", "is_weekend", "is_holiday", "origin_hourly_congestion",
+    # Aircraft rotation (US only - India has no tail numbers), see clean_monthly_flights
+    "leg_of_day", "scheduled_turnaround_min", "prev_leg_arrival_delay", "prev_leg_known",
+    # Destination weather (US only), carried with its own known-flag
+    "dest_temp_f", "dest_precip_in", "dest_pressure", "dest_visibility", "dest_wind_speed",
+    "dest_weather_known",
 ]
+
+# Numeric columns only one source has. Filled with the KNOWN rows' mean so that
+# after the encoder's zero-mean scaling they land at exactly 0 ("no signal"),
+# with the matching *_known flag telling the model which rows those are.
+PARTIAL_COLS = ["scheduled_turnaround_min", "dest_temp_f", "dest_precip_in",
+                "dest_pressure", "dest_visibility", "dest_wind_speed"]
 
 
 def run() -> pd.DataFrame:
@@ -43,6 +54,10 @@ def run() -> pd.DataFrame:
     known_temp_mean = combined.loc[combined["origin_temp_known"] == 1, "origin_temp_f"].mean()
     n_unknown = int((combined["origin_temp_known"] == 0).sum())
     combined["origin_temp_f"] = combined["origin_temp_f"].fillna(known_temp_mean)
+
+    for col in PARTIAL_COLS:
+        combined[col] = pd.to_numeric(combined[col], errors="coerce")
+        combined[col] = combined[col].fillna(combined[col].mean())
     print(f"Filled {n_unknown:,} rows with unknown origin temperature "
           f"(origin_temp_known=0) using the known-rows mean ({known_temp_mean:.1f}F).")
 

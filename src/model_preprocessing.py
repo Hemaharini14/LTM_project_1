@@ -33,6 +33,15 @@ CONT_COLS = [
     "origin_temp_f", "origin_temp_known",
     "origin_precip_in", "origin_pressure", "origin_visibility", "origin_wind_speed",
     "is_weekend", "is_holiday", "origin_hourly_congestion", "route_frequency",
+    # Aircraft rotation. prev_leg_arrival_delay is the strongest single feature in
+    # the data (9% delay rate when the inbound arrived early vs 84% when it was
+    # 45-90 min late) but is only observable same-day, so prev_leg_known rides
+    # alongside it exactly as origin_temp_known does. leg_of_day and
+    # scheduled_turnaround_min are pure schedule structure and always knowable.
+    "leg_of_day", "scheduled_turnaround_min", "prev_leg_arrival_delay", "prev_leg_known",
+    # Destination-side weather, previously computed and thrown away.
+    "dest_temp_f", "dest_precip_in", "dest_pressure", "dest_visibility",
+    "dest_wind_speed", "dest_weather_known",
 ]
 
 TARGET_COL = "is_delayed"

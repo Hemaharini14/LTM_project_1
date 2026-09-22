@@ -58,6 +58,28 @@ VALIDATION_SAMPLE_PATH = os.path.join(OUTPUT_DIR, "validation_sample.csv")
 SAMPLE_SIZE = 300
 
 
+def _auc_by_prior_leg(val_df, y_true, probs) -> dict:
+    """AUC separately for flights where the inbound aircraft's delay was known vs not.
+
+    The unknown case is the one the web form actually hits most of the time, so if it
+    regresses against the previous model this feature set is a net loss for real use,
+    however good the headline number looks.
+    """
+    out = {}
+    if "prev_leg_known" not in val_df.columns:
+        return out
+    flags = val_df["prev_leg_known"].to_numpy()
+    for label, mask in [("prior_leg_known", flags == 1), ("prior_leg_unknown", flags == 0)]:
+        n = int(mask.sum())
+        # AUC is undefined without both classes present
+        if n < 100 or len(set(y_true[mask].tolist())) < 2:
+            out[label] = {"n": n, "auc": None}
+            continue
+        out[label] = {"n": n, "auc": round(float(roc_auc_score(y_true[mask], probs[mask])), 4),
+                       "actual_delay_rate": round(float(y_true[mask].mean()), 4)}
+    return out
+
+
 def main():
     print("Loading unified dataset and reconstructing the original validation split...")
     df = load_clean_flight_weather(UNIFIED_FLIGHT_WEATHER_CLEAN_PATH)
@@ -123,6 +145,11 @@ def main():
         "at_recommended_threshold": metrics_at(recommended_threshold),
         "classification_report_at_default_threshold": classification_report(
             y_true, preds_default, target_names=["On-time", "Delayed"], output_dict=True, zero_division=0),
+        # Split by whether the aircraft's prior leg was observable. prev_leg_arrival_delay
+        # is the strongest feature in the data but only exists same-day, so a single
+        # blended AUC would flatter the case that actually matters: a traveller checking
+        # a flight next week, where that feature is absent. Report both.
+        "auc_by_prior_leg": _auc_by_prior_leg(val_df, y_true, probs),
         # Real calibration check: for flights whose CALIBRATED score falls in each bucket,
         # what fraction actually got delayed - should track the bucket range closely, unlike
         # the raw-score version of this same table (see the module docstring).
