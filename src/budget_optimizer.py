@@ -41,7 +41,16 @@ def _load_hotels():
     return _HOTELS_DF
 
 
-def reallocate_budget(current_budget: dict, extra_cost: float, priority: str = "cost"):
+def reallocate_budget(current_budget: dict, extra_cost: float, priority: str = "cost",
+                       committed: set | None = None):
+    """Covers `extra_cost` by trimming flexible categories in priority order.
+
+    committed holds categories the traveller has already booked and paid for. Trimming
+    those is fiction: the money is spent, so "freeing" it doesn't fund anything. They're
+    skipped entirely, which can mean a larger honest shortfall - the right answer, since
+    the alternative is a plan that only balances on paper.
+    """
+    committed = committed or set()
     order = PRIORITY_TRIM_ORDER.get(priority, PRIORITY_TRIM_ORDER["cost"])
     new_budget = dict(current_budget)
     remaining = extra_cost
@@ -50,6 +59,8 @@ def reallocate_budget(current_budget: dict, extra_cost: float, priority: str = "
     for cat in order:
         if remaining <= 0:
             break
+        if cat in committed:
+            continue
         original = current_budget.get(cat, 0.0)
         floor = original * MIN_FRACTION[cat]
         available = max(0.0, new_budget[cat] - floor)
@@ -58,6 +69,9 @@ def reallocate_budget(current_budget: dict, extra_cost: float, priority: str = "
             new_budget[cat] -= take
             remaining -= take
             trim_log.append(f"Trimmed ${take:.2f} from {cat.replace('_cost','')}")
+
+    for cat in sorted(committed):
+        trim_log.append(f"Left {cat.replace('_cost','')} untouched - already booked")
 
     shortfall = max(0.0, remaining)
     if shortfall > 0:

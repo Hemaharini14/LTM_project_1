@@ -644,3 +644,8 @@ table.admin-table th { color: var(--teal-deep); font-weight: 600; }
 }
 .ac-item { padding: 8px 10px; border-radius: 7px; cursor: pointer; font-size: 0.9rem; }
 .ac-item:hover, .ac-active { background: var(--teal-light); }
+
+/* --------------------------------- recovery: already-booked checkboxes */
+.booked-grid { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+.checkbox-row { flex-direction: row !important; align-items: center; gap: 8px !important; font-weight: 500; }
+.checkbox-row input[type="checkbox"] { width: auto; margin: 0; }

@@ -73,7 +73,8 @@ def _deterministic_recovery(trip: dict, delay_probability: float, label: str) ->
     # No real fare data exists; use a simple proxy (10% of flight budget per
     # risk tier avoided) rather than a fabricated price difference.
     extra_cost = round(budget.get("flight_cost", 0) * 0.1, 2) if alts else 0.0
-    new_budget, shortfall, trim_log = reallocate_budget(budget, extra_cost, trip.get("priority", "cost"))
+    new_budget, shortfall, trim_log = reallocate_budget(
+        budget, extra_cost, trip.get("priority", "cost"), committed=set(trip.get("committed") or []))
 
     parts = [f"Delay risk is {delay_probability:.0%} ({label})."]
     if alts:
@@ -186,7 +187,9 @@ def _agentic_recovery(trip: dict, delay_probability: float, label: str) -> dict:
         search_alternatives (extra cost is zero if no alternative was found)."""
         budget = trip.get("budget", {})
         extra_cost = round(budget.get("flight_cost", 0) * 0.1, 2) if collected.get("alternative_flights") else 0.0
-        new_budget, shortfall, trim_log = reallocate_budget(budget, extra_cost, trip.get("priority", "cost"))
+        new_budget, shortfall, trim_log = reallocate_budget(
+            budget, extra_cost, trip.get("priority", "cost"),
+            committed=set(trip.get("committed") or []))
         collected["extra_cost"] = extra_cost
         collected["new_budget"] = summarize_budget(new_budget)
         collected["budget_shortfall"] = shortfall
@@ -213,6 +216,10 @@ def _agentic_recovery(trip: dict, delay_probability: float, label: str) -> dict:
         "shortest duration, as no real fare data exists. "
         "If every option comes back high-risk, you may retry search_alternatives with a "
         "different weekday_offset. "
+        "already_booked lists what the traveller has already paid for: don't propose "
+        "changing those, and don't count them as savings. If they name where they're "
+        "staying or sightseeing they've committed to, work around those rather than "
+        "replacing them. Skip search_hotels entirely if they already have a hotel. "
         "Answer in under 80 words: the recommendation only, no preamble and no list of the "
         "tools you called."
     )
@@ -220,6 +227,9 @@ def _agentic_recovery(trip: dict, delay_probability: float, label: str) -> dict:
         "priority": trip.get("priority"), "destination_city": trip.get("destination_city"),
         "budget": trip.get("budget"), "scheduled_hour": trip.get("scheduled_hour", 12),
         "scheduled_elapsed_time": trip.get("scheduled_elapsed_time"), "weekday": trip.get("weekday"),
+        "already_booked": trip.get("committed") or [],
+        "staying_at": trip.get("stay_name") or None,
+        "planned_sightseeing": trip.get("planned_spots") or [],
     })
     try:
         # recursion_limit caps agent+tool node visits (~2 per step), bounding worst-case

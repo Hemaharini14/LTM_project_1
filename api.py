@@ -409,7 +409,25 @@ def flight_delay():
             }
             priority = request.form.get("priority", "cost")
 
-            state = {**inputs, "priority": priority, "budget": budget}
+            # Categories the traveller has already paid for - these must not be
+            # trimmed to fund the disruption (see budget_optimizer.reallocate_budget).
+            committed = [c for c in request.form.getlist("committed")
+                         if c.endswith("_cost")]
+
+            # Sightseeing already decided on, so the agent knows what's actually
+            # committed rather than treating the whole line as discretionary.
+            planned_spots = []
+            for i in (1, 2, 3):
+                name = request.form.get(f"spot_name_{i}", "").strip()
+                if name:
+                    planned_spots.append({
+                        "name": name,
+                        "cost_usd": _float_field(request.form, f"spot_cost_{i}", 0),
+                    })
+
+            state = {**inputs, "priority": priority, "budget": budget,
+                     "committed": committed, "planned_spots": planned_spots,
+                     "stay_name": request.form.get("stay_name", "").strip()}
             state.pop("travel_date", None)
             outcome = _recovery_app.invoke(state)
             outcome["assumed_hotel_nights"] = ASSUMED_RECOVERY_HOTEL_NIGHTS
