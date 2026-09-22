@@ -13,6 +13,8 @@ outputs/
 
 # Trained model artifacts (regenerate via src/train_delay_model_v2.py)
 models/artifacts/
+# Pre-retrain snapshot kept on disk for rollback; derived, never committed
+models/artifacts_backup/
 
 # SQLite database (plus WAL-mode side files - see src/db.py)
 *.db
