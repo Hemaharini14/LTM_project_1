@@ -116,6 +116,33 @@
       <span class="risk-label">{{ result.label }} risk</span>
     </div>
 
+    {% if result.duration %}
+    <div class="duration-card">
+      <h4>If it is delayed, how long?</h4>
+      <p class="duration-headline">
+        Typically <strong>{{ result.duration.median_min }} min</strong>
+        <span class="muted">· 1 in 10 run past {{ result.duration.p90_min }} min</span>
+      </p>
+      {% if result.duration.top_cause %}
+      <p>Usual reason: <strong>{{ result.duration.top_cause }}</strong>
+        ({{ (result.duration.top_cause_share * 100) | round(0) | int }}% of delay minutes)</p>
+      <ul class="cause-list">
+        {% for cause, share in result.duration.causes.items() %}
+        <li><span>{{ cause }}</span>
+          <span class="cause-bar"><span class="cause-fill" style="width: {{ (share * 100) | round(1) }}%"></span></span>
+          <span class="muted">{{ (share * 100) | round(0) | int }}%</span></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      <p class="dataset-note">
+        Measured from {{ "{:,}".format(result.duration.sample_size) }} real flights that were
+        actually delayed ({{ result.duration.basis_label }}) — not a prediction for your specific
+        flight, and not conditioned on the weather above. The percentage is the chance of a delay;
+        this is how long one usually lasts when it happens.
+      </p>
+    </div>
+    {% endif %}
+
     {% if result.label == 'Low' %}
       <p class="result-message safe">No significant delay expected. Have a safe journey!</p>
     {% else %}

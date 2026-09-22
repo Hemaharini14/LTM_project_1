@@ -27,6 +27,7 @@ sys.path.append(os.path.join(PROJECT_ROOT, "src"))
 
 import db
 from predict_delay_v2 import predict_delay_probability, risk_label
+from delay_duration import estimate_delay_duration
 from recovery_graph import build_graph
 from recovery_tools import get_dataset_index, is_route_covered, lookup_flight_by_number
 from trip_planner import plan_budget_trip
@@ -389,6 +390,13 @@ def flight_delay():
                 )
                 label = risk_label(prob)
                 result = {"probability": prob, "label": label, "inputs": inputs, "lookup_note": lookup_note}
+                # "How likely" comes from the trained model; "how long and why" is a
+                # real historical statistic for flights like this one that actually
+                # were delayed (delay_duration.py) - the classifier can't say either.
+                if label != "Low":
+                    result["duration"] = estimate_delay_duration(
+                        inputs["carrier_code"], inputs["origin_airport"],
+                        inputs["destination_airport"], inputs["scheduled_hour"])
                 db.save_flight_check(session["user_id"], inputs, prob, label)
                 session["last_flight_check"] = inputs
                 session["last_flight_risk"] = {"probability": prob, "label": label}
@@ -432,7 +440,10 @@ def flight_delay():
             outcome = _recovery_app.invoke(state)
             outcome["assumed_hotel_nights"] = ASSUMED_RECOVERY_HOTEL_NIGHTS
             recommendation = outcome
-            result = {"probability": risk["probability"], "label": risk["label"], "inputs": inputs}
+            result = {"probability": risk["probability"], "label": risk["label"], "inputs": inputs,
+                      "duration": estimate_delay_duration(
+                          inputs["carrier_code"], inputs["origin_airport"],
+                          inputs["destination_airport"], inputs.get("scheduled_hour", 12))}
             db.save_flight_check(session["user_id"], inputs, risk["probability"], risk["label"], outcome)
 
     return render_template("flight_delay.html", result=result, recommendation=recommendation,

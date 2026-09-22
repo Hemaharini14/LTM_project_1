@@ -649,3 +649,13 @@ table.admin-table th { color: var(--teal-deep); font-weight: 600; }
 .booked-grid { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
 .checkbox-row { flex-direction: row !important; align-items: center; gap: 8px !important; font-weight: 500; }
 .checkbox-row input[type="checkbox"] { width: auto; margin: 0; }
+
+/* --------------------------------- delay duration + cause breakdown */
+.duration-card { margin: 16px 0; padding: 14px 16px; background: var(--sand); border-radius: 12px; }
+.duration-card h4 { margin: 0 0 6px; font-size: 1rem; }
+.duration-headline { margin: 0 0 8px; font-size: 1.05rem; }
+.cause-list { list-style: none; margin: 8px 0 10px; padding: 0; font-size: 0.85rem; }
+.cause-list li { display: grid; grid-template-columns: 150px 1fr 40px; align-items: center; gap: 8px; margin-bottom: 4px; }
+.cause-bar { background: var(--sand-dark); border-radius: 999px; height: 8px; overflow: hidden; }
+.cause-fill { display: block; height: 100%; background: linear-gradient(90deg, var(--coral), var(--sunset)); }
+@media (max-width: 520px) { .cause-list li { grid-template-columns: 110px 1fr 36px; } }
