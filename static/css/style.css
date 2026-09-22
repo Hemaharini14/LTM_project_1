@@ -403,3 +403,232 @@ table.admin-table th { color: var(--teal-deep); font-weight: 600; }
 @media (max-width: 480px) {
   .chat-panel { width: calc(100vw - 32px); right: -6px; }
 }
+
+/* ---------------------------------------------------------------- landing */
+
+.landing-body { background: var(--ink); }
+.landing-body .page { max-width: none; padding: 0; }
+.landing-body .site-footer { background: var(--ink); color: rgba(255,255,255,0.5); }
+
+.landing-hero {
+  position: relative;
+  min-height: calc(100vh - 140px);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* keeps the copy centred in the sky, clear of the runway pinned below */
+  padding-bottom: 32vh;
+}
+
+/* dusk sky fading into a sunset at the horizon */
+.sky {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, #0c3f4c 0%, var(--teal-deep) 30%, var(--teal) 52%,
+                                       var(--sunset) 76%, var(--coral) 100%);
+}
+
+.sun {
+  position: absolute;
+  left: 50%;
+  bottom: 30%;
+  width: 170px;
+  height: 170px;
+  margin-left: -85px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff3d6 0%, var(--sunset) 55%, rgba(255,126,95,0) 72%);
+  opacity: 0.9;
+}
+
+.cloud {
+  position: absolute;
+  height: 14px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.28);
+  filter: blur(1px);
+}
+.cloud-1 { width: 190px; top: 22%; left: -190px; animation: drift 38s linear infinite; }
+.cloud-2 { width: 120px; top: 38%; left: -120px; animation: drift 52s linear infinite 6s; opacity: 0.7; }
+.cloud-3 { width: 240px; top: 14%; left: -240px; animation: drift 64s linear infinite 14s; opacity: 0.5; }
+
+@keyframes drift {
+  from { transform: translateX(0); }
+  to   { transform: translateX(calc(100vw + 260px)); }
+}
+
+/* plane on final approach, descending toward the runway threshold */
+.landing-plane {
+  position: absolute;
+  /* above the runway (1) so the touchdown/rollout stays visible, below the copy (3) */
+  z-index: 2;
+  width: 74px;
+  height: 74px;
+  fill: #fff;
+  filter: drop-shadow(0 6px 14px rgba(0,0,0,0.35));
+  animation: approach 9s ease-in infinite;
+}
+
+@keyframes approach {
+  0%   { top: 8%;  left: -12%; transform: rotate(103deg) scale(0.75); opacity: 0; }
+  12%  { opacity: 1; }
+  70%  { top: 56%; left: 46%;  transform: rotate(97deg) scale(1); opacity: 1; }
+  92%  { top: 66%; left: 78%;  transform: rotate(90deg) scale(1.02); opacity: 1; }
+  100% { top: 66%; left: 108%; transform: rotate(90deg) scale(1.02); opacity: 0; }
+}
+
+/* runway laid flat in perspective, pinned along the bottom */
+.runway {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  height: 34vh;
+  min-height: 190px;
+  perspective: 340px;
+  perspective-origin: 50% 0%;
+}
+
+.runway-surface {
+  position: absolute;
+  inset: 0;
+  transform: rotateX(62deg);
+  transform-origin: 50% 0%;
+  background: linear-gradient(180deg, #3b4547 0%, #272f31 60%, #1b2122 100%);
+  box-shadow: 0 -20px 60px rgba(0,0,0,0.45);
+  border-top: 3px solid rgba(255,255,255,0.55);
+}
+
+/* dashed centre markings */
+.runway-centerline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 16px;
+  margin-left: -8px;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255,255,255,0.9) 0 42px,
+    transparent 42px 84px
+  );
+}
+
+/* edge lights */
+.runway-surface::before,
+.runway-surface::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--sunset) 0 10px,
+    transparent 10px 70px
+  );
+}
+.runway-surface::before { left: 8%; }
+.runway-surface::after  { right: 8%; }
+
+.landing-copy {
+  position: relative;
+  z-index: 3;
+  text-align: center;
+  color: #fff;
+  padding: 0 20px;
+}
+.landing-copy h1 {
+  margin: 0 0 14px;
+  font-size: clamp(2rem, 5.2vw, 3.3rem);
+  line-height: 1.12;
+  text-shadow: 0 4px 22px rgba(0,0,0,0.4);
+}
+.landing-copy p {
+  margin: 0 auto 26px;
+  max-width: 560px;
+  line-height: 1.6;
+  color: rgba(255,255,255,0.92);
+  text-shadow: 0 2px 12px rgba(0,0,0,0.45);
+}
+
+/* the arrow CTA -> login */
+.landing-arrow {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: #fff;
+}
+.landing-arrow-label {
+  font-family: 'Quicksand', 'Poppins', sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 0.82rem;
+  opacity: 0.9;
+}
+.landing-arrow-circle {
+  display: grid;
+  place-items: center;
+  width: 62px;
+  height: 62px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.14);
+  border: 2px solid rgba(255,255,255,0.85);
+  backdrop-filter: blur(4px);
+  animation: bob 2.1s ease-in-out infinite;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+.landing-arrow-circle svg { width: 30px; height: 30px; }
+.landing-arrow:hover .landing-arrow-circle,
+.landing-arrow:focus-visible .landing-arrow-circle {
+  background: var(--coral);
+  border-color: var(--coral);
+  transform: scale(1.08);
+}
+
+@keyframes bob {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(9px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-plane, .cloud, .landing-arrow-circle { animation: none; }
+  .landing-plane { top: 56%; left: 46%; transform: rotate(97deg); opacity: 1; }
+}
+
+@media (max-width: 600px) {
+  .landing-plane { width: 52px; height: 52px; }
+  .sun { width: 120px; height: 120px; margin-left: -60px; }
+  .runway { height: 26vh; }
+}
+
+/* 3D scene (static/js/landing3d.js) sits above the CSS sky, below the copy.
+   .three-ready is added by that script only once WebGL actually initialised,
+   which is what retires the 2D fallback plane/runway underneath it. */
+.landing-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  display: block;
+  opacity: 0;
+  transition: opacity 0.7s ease;
+  pointer-events: none;
+}
+.landing-hero.three-ready .landing-canvas { opacity: 1; }
+.landing-hero.three-ready .landing-plane,
+.landing-hero.three-ready .runway { display: none; }
+
+/* ------------------------------------------------- transport mode comparison */
+.transport-card { min-width: 190px; }
+.transport-card form { margin-top: 10px; }
+.transport-time { font-size: 1.45rem; font-weight: 700; color: var(--teal-deep); }
+.transport-cost { font-weight: 600; color: var(--coral); }
+.transport-unavailable { opacity: 0.62; }
+.spot-list { margin: 0; padding-left: 18px; line-height: 1.6; font-size: 0.9rem; }
+.spot-list li { margin-bottom: 4px; }

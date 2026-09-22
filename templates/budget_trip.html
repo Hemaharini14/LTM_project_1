@@ -9,20 +9,31 @@
 <div class="panel-grid">
   <div class="panel form-panel">
     <h2>Trip details</h2>
-    <form method="post" class="form-stack">
+    {# explicit action: this template is also rendered at /history/trip/<id>, which is
+       GET-only, so a bare method="post" would post back to that URL and 405. #}
+    <form method="post" action="{{ url_for('budget_trip') }}" class="form-stack">
       <datalist id="airport-list">
         {% for a in airports %}<option value="{{ a.code }}">{{ a.label }}</option>{% endfor %}
       </datalist>
+      <input type="hidden" name="stage" value="{{ 'plan' if form_data.transport_mode else 'compare' }}">
       <div class="form-grid">
-        <label>Origin airport <span class="muted">(pick from list or type a code)</span>
-          <input type="text" name="origin_airport" list="airport-list" maxlength="4" placeholder="e.g. LAX" required
+        <label>Starting location
+          <input type="text" name="origin_place" placeholder="e.g. Bengaluru" required
+                 value="{{ form_data.origin_place or '' }}">
+        </label>
+        <label>Trip location
+          <input type="text" name="destination_place" placeholder="e.g. Chennai" required
+                 value="{{ form_data.destination_place or '' }}">
+        </label>
+        <label>Origin airport <span class="muted">(optional — auto-detected from your starting location)</span>
+          <input type="text" name="origin_airport" list="airport-list" maxlength="4" placeholder="e.g. LAX"
                  value="{{ form_data.origin_airport or '' }}">
         </label>
-        <label>Destination airport
-          <input type="text" name="destination_airport" list="airport-list" maxlength="4" placeholder="e.g. JFK" required
+        <label>Destination airport <span class="muted">(optional — leave blank to auto-detect from the city)</span>
+          <input type="text" name="destination_airport" list="airport-list" maxlength="4" placeholder="e.g. JFK"
                  value="{{ form_data.destination_airport or '' }}">
         </label>
-        <label>Destination city <span class="muted">(for live weather)</span>
+        <label>Destination city <span class="muted">(for live weather, and to auto-find the nearest airport)</span>
           <input type="text" name="destination_city" placeholder="e.g. New York"
                  value="{{ form_data.destination_city or '' }}">
         </label>
@@ -68,9 +79,63 @@
         </label>
       </div>
 
-      <button type="submit" class="btn btn-primary btn-block">Plan my trip</button>
+      {% if form_data.transport_mode %}
+      <input type="hidden" name="transport_mode" value="{{ form_data.transport_mode }}">
+      <button type="submit" class="btn btn-primary btn-block">Re-plan my trip</button>
+      {% else %}
+      <button type="submit" class="btn btn-primary btn-block">Compare ways to get there</button>
+      {% endif %}
     </form>
   </div>
+
+  {% if transport_options %}
+  <div class="panel result-panel">
+    <h2>How to get there</h2>
+    <p class="muted">Pick a mode to continue to your full itinerary.</p>
+    <div class="card-row">
+      {% for t in transport_options %}
+      <div class="mini-card transport-card {{ 'transport-unavailable' if not t.available }}">
+        <strong>{{ t.mode|capitalize }}</strong>
+        {% if t.available %}
+          <span class="transport-time">{{ t.duration_hours }} h</span>
+          {% if t.distance_km %}<span class="muted">{{ t.distance_km }} km</span>{% endif %}
+          {% if t.origin_airport %}<span class="muted">{{ t.origin_airport }} → {{ t.destination_airport }}</span>{% endif %}
+          {% if t.estimated_cost_usd is not none %}
+            <span class="transport-cost">~{{ t.estimated_cost_usd | money }}</span>
+            <span class="muted">Estimate: {{ t.cost_basis }}</span>
+          {% else %}
+            <span class="muted">No fare data — this project has no flight pricing source.</span>
+          {% endif %}
+          {# reference-only routes carry a risk_label but no delay_probability (see
+             intl_reference.py), and non-flight modes have no such key at all - so use
+             .get(): a bare "is not none" passes for a missing key, since Jinja returns
+             Undefined rather than None and Undefined is not None. #}
+          {% if t.get('delay_probability') is not none %}
+            <span class="badge risk-{{ t.risk_label|lower }}">{{ t.risk_label }} delay risk
+              ({{ (t.delay_probability * 100) | round(1) }}%)</span>
+          {% elif t.reference_only %}
+            <span class="badge admin-badge no">Reference schedule — not modelled</span>
+          {% endif %}
+          <span class="muted">{{ t.note }}</span>
+          <form method="post" action="{{ url_for('budget_trip') }}">
+            <input type="hidden" name="stage" value="plan">
+            <input type="hidden" name="transport_mode" value="{{ t.mode }}">
+            {% for k in ['origin_place','destination_place','origin_airport','destination_airport',
+                          'destination_city','start_date','days','total_budget','stay_comfort',
+                          'travel_comfort','food_comfort','sightseeing_level'] %}
+            <input type="hidden" name="{{ k }}" value="{{ form_data[k] or '' }}">
+            {% endfor %}
+            <button type="submit" class="btn btn-secondary btn-sm">Select {{ t.mode }}</button>
+          </form>
+        {% else %}
+          <span class="badge admin-badge no">No data source</span>
+          <span class="muted">{{ t.note }}</span>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
 
   {% if plan %}
   <div class="panel result-panel">
@@ -94,6 +159,16 @@
       {% endfor %}
       <div class="budget-total">Total: {{ plan.budget_breakdown.total | money }} · {{ plan.nights }} night(s)</div>
     </div>
+    {% if plan.optimizer_feasible %}
+    <p class="dataset-note">Optimized: checked {{ plan.combinations_considered }} real flight × hotel
+      combination(s) against your budget and picked the best-scoring one for your priority.</p>
+    {% else %}
+    <div class="coverage-warning">
+      No real hotel tier fits this budget alongside real necessities — you're
+      {{ plan.optimizer_shortfall_usd | money }} short even with the cheapest real option shown below.
+      Raise the budget or trim trip length to see a feasible plan.
+    </div>
+    {% endif %}
 
     {% if plan.hotel_reality_check %}
     <p class="muted reality-check">
@@ -105,6 +180,18 @@
     {% if plan.destination_weather %}
     <div class="mini-card">
       Destination weather: {{ plan.destination_weather.condition }} · {{ plan.destination_weather.temperature_celsius }}°C
+    </div>
+    {% endif %}
+
+    {% if plan.auto_resolved_destination_airport %}
+    <p class="dataset-note">No destination airport entered — auto-detected the nearest airport with real
+      data as <strong>{{ plan.auto_resolved_destination_airport }}</strong> ({{ airport_label(plan.auto_resolved_destination_airport) }}).</p>
+    {% endif %}
+    {% if plan.destination_airport_transfer %}
+    <div class="mini-card">
+      {{ plan.destination_airport_transfer.airport_code }} airport → {{ form_data.destination_city }}:
+      ~{{ plan.destination_airport_transfer.distance_km }} km, ~{{ plan.destination_airport_transfer.duration_min }} min by car
+      <span class="muted">(real route, Geoapify)</span>
     </div>
     {% endif %}
   </div>
@@ -172,14 +259,28 @@
   {% endif %}
 
   {% if plan.suggested_hotels %}
+  {% if plan.hotel_source == 'real' %}
+  <h4 class="sub-heading">Pick a hotel <span class="muted">(real venues)</span></h4>
+  <p class="dataset-note">Real listings with real addresses (Foursquare). No rating or per-property
+    price — those are paid fields, so the nightly figure above is the real market tier median, not
+    this specific hotel's rate. Confirm the rate with the property.</p>
+  {% else %}
   <h4 class="sub-heading">Pick a hotel <span class="muted">(AI-suggested, real names)</span></h4>
   <p class="dataset-note">Real names, unverified — no price data; confirm details before booking.</p>
+  {% endif %}
   <div class="card-row">
     {% for h in plan.suggested_hotels %}
     <div class="mini-card hotel-suggestion-card">
       <strong>{{ h.name }}</strong>
-      <span class="muted">{{ h.area }}</span>
+      {% if h.address %}<span class="muted">{{ h.address }}</span>
+      {% else %}<span class="muted">{{ h.area }}</span>{% endif %}
       <span class="muted">{{ h.note }}</span>
+      {% if h.tel or h.website %}
+      <span class="muted">
+        {% if h.tel %}{{ h.tel }}{% endif %}
+        {% if h.website %} · <a href="{{ h.website }}" target="_blank" rel="noopener noreferrer">Website</a>{% endif %}
+      </span>
+      {% endif %}
       {% if h.map_url %}
       <iframe class="hotel-map" src="{{ h.map_url }}" loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="Map for {{ h.name }}"></iframe>
       {% if h.map_approximate %}<span class="muted">Map centered on the area — exact location not confirmed</span>{% endif %}
@@ -191,10 +292,35 @@
   </div>
   {% endif %}
 
+  {% if plan.sightseeing_common or plan.sightseeing_hidden %}
+  <h3>Sightseeing spots</h3>
+  <p class="muted">Pace: <strong>{{ plan.spots_per_day }} spot{{ 's' if plan.spots_per_day != 1 }} per full day</strong>.
+    "Well known" means the place has a real Wikipedia/Wikidata entry — not an opinion, just whether
+    the world has written it up. Both lists are real places from Geoapify.</p>
+  <div class="panel-grid">
+    <div>
+      <h4 class="sub-heading">Well known ({{ plan.sightseeing_common|length }})</h4>
+      {% if plan.sightseeing_common %}
+      <ul class="spot-list">
+        {% for s in plan.sightseeing_common %}<li><strong>{{ s.name }}</strong> <span class="muted">{{ s.area }} · {{ s.note }}</span></li>{% endfor %}
+      </ul>
+      {% else %}<p class="muted">No wiki-backed landmarks found near this destination.</p>{% endif %}
+    </div>
+    <div>
+      <h4 class="sub-heading">Hidden gems ({{ plan.sightseeing_hidden|length }})</h4>
+      {% if plan.sightseeing_hidden %}
+      <ul class="spot-list">
+        {% for s in plan.sightseeing_hidden[:10] %}<li><strong>{{ s.name }}</strong> <span class="muted">{{ s.area }} · {{ s.note }}</span></li>{% endfor %}
+      </ul>
+      {% else %}<p class="muted">No lesser-known spots found near this destination.</p>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
   <h3>Sightseeing &amp; day-by-day plan</h3>
   <p class="muted">Daily food budget {{ plan.daily_food_budget_usd | money }} · daily local transport {{ plan.daily_transport_budget_usd | money }}</p>
-  {% if plan.food_source == 'curated' %}
-  <p class="dataset-note">Curated real spots for this destination.</p>
+  {% if plan.food_source == 'curated' or plan.sightseeing_source == 'real' %}
+  <p class="dataset-note">Real spots for this destination (curated and/or Geoapify).</p>
   {% elif plan.food_source == 'ai' or plan.sightseeing_source == 'ai' %}
   <p class="dataset-note">AI-suggested, unverified — double-check before relying on these.</p>
   {% else %}

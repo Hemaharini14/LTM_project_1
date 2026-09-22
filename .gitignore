@@ -14,8 +14,10 @@ outputs/
 # Trained model artifacts (regenerate via src/train_delay_model_v2.py)
 models/artifacts/
 
-# SQLite database
+# SQLite database (plus WAL-mode side files - see src/db.py)
 *.db
+*.db-shm
+*.db-wal
 
 # Environment variables / API keys — NEVER commit these
 .env

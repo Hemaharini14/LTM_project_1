@@ -9,7 +9,9 @@
 <div class="panel-grid">
   <div class="panel form-panel">
     <h2>Flight details</h2>
-    <form method="post" class="form-stack">
+    {# explicit action: this template is also rendered at /history/flight/<id>, which is
+       GET-only, so a bare method="post" would post back to that URL and 405. #}
+    <form method="post" action="{{ url_for('flight_delay') }}" class="form-stack">
       <input type="hidden" name="stage" value="check">
       <datalist id="airport-list">
         {% for a in airports %}<option value="{{ a.code }}">{{ a.label }}</option>{% endfor %}
@@ -31,6 +33,10 @@
         <label>Travel date
           <input type="date" name="travel_date" required
                  value="{{ result.inputs.travel_date if result else '' }}">
+        </label>
+        <label>Departure time <span class="muted">(optional - improves accuracy)</span>
+          <input type="time" name="departure_time"
+                 value="{{ '%02d:00'|format(result.inputs.scheduled_hour) if result and result.inputs.scheduled_hour is defined else '' }}">
         </label>
       </div>
       <p class="dataset-note">Know your flight number? Fill it in above with the airline and we'll find the route automatically. Otherwise, enter the route manually below.</p>
@@ -118,8 +124,16 @@
         Would you like us to recommend an alternative that fits your budget?
       </p>
 
-      {% if not recommendation %}
-      <form method="post" class="form-stack budget-subform">
+      {% if not recommendation and from_history %}
+      {# The recover stage reads session["last_flight_check"], which is whatever was
+         checked most recently - NOT this saved check. Offering it here would return
+         alternatives for the wrong flight, so send them back to re-run it instead. #}
+      <p class="muted">
+        This is a saved check with no alternatives stored. To get alternatives for this flight,
+        <a href="{{ url_for('flight_delay') }}">run the check again</a>.
+      </p>
+      {% elif not recommendation %}
+      <form method="post" action="{{ url_for('flight_delay') }}" class="form-stack budget-subform">
         <input type="hidden" name="stage" value="recover">
         <div class="form-grid">
           <label>Flight budget (USD $) <input type="number" name="flight_cost" value="150" min="0"></label>

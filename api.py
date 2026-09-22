@@ -29,15 +29,20 @@ from predict_delay_v2 import predict_delay_probability, risk_label
 from recovery_graph import build_graph
 from recovery_tools import get_dataset_index, is_route_covered, lookup_flight_by_number
 from trip_planner import plan_budget_trip
+from transport_modes import compare_transport_modes
+from maps import nearest_supported_airport
 from reference_data import carrier_label, airport_label, CARRIER_NAMES
 from intl_reference import INTL_AIRPORT_CODES, get_reference_flights
 from llm_utils import narrate_trip_plan, llm_status
+from model_metrics import load_model_metrics, sample_validation_flights
 from chat_agent import run_chat
+from feature_engineering import is_holiday_date
 import currency as currency_utils
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-production")
 app.jinja_env.globals["carrier_name"] = carrier_label
+app.jinja_env.globals["airport_label"] = airport_label
 
 _MARKDOWN_ALLOWED_TAGS = ["p", "strong", "em", "ul", "ol", "li", "table", "thead", "tbody", "tr",
                           "th", "td", "h1", "h2", "h3", "h4", "br", "code", "pre", "blockquote", "hr", "a"]
@@ -66,6 +71,18 @@ DEFAULT_WEATHER = {
     "temp_f": 55, "precip_in": 0.0, "pressure": 29.9, "visibility": 10.0, "wind_speed": 8,
 }
 ASSUMED_RECOVERY_HOTEL_NIGHTS = 3  # recovery_graph doesn't track trip length; matches its own /3 assumption
+
+
+def _float_field(form, key: str, default: float) -> float:
+    """form.get(key, default) only falls back when the field is absent, not when it's
+    submitted as an empty string (e.g. a number input the user cleared) - this covers both."""
+    raw = (form.get(key) or "").strip()
+    return float(raw) if raw else float(default)
+
+
+def _int_field(form, key: str, default: int) -> int:
+    raw = (form.get(key) or "").strip()
+    return int(raw) if raw else int(default)
 
 
 def login_required(view):
@@ -119,7 +136,9 @@ def _format_ts(iso_str: str) -> str:
 
 @app.route("/")
 def index():
-    return redirect(url_for("home") if session.get("user_id") else url_for("login"))
+    if session.get("user_id"):
+        return redirect(url_for("home"))
+    return render_template("landing.html")
 
 
 @app.route("/signup", methods=["GET", "POST"])
@@ -274,7 +293,9 @@ def flight_delay():
             flight_number = request.form.get("flight_number", "").strip()
             origin_airport = request.form.get("origin_airport", "").strip().upper()
             destination_airport = request.form.get("destination_airport", "").strip().upper()
-            scheduled_elapsed_time = float(request.form.get("scheduled_elapsed_time", 120))
+            scheduled_elapsed_time = _float_field(request.form, "scheduled_elapsed_time", 120)
+            departure_time_str = request.form.get("departure_time", "").strip()
+            scheduled_hour = int(departure_time_str.split(":")[0]) if departure_time_str else 12
 
             flight_lookup = None
             if flight_number:
@@ -294,17 +315,26 @@ def flight_delay():
                 "flight_number": flight_number,
                 "origin_airport": origin_airport,
                 "destination_airport": destination_airport,
-                "destination_city": request.form.get("destination_city", "").strip(),
+                "destination_city": (request.form.get("destination_city", "").strip()
+                                 or request.form.get("destination_place", "").strip()),
                 "travel_date": travel_date,
                 "weekday": weekday,
                 "month": datetime.strptime(travel_date, "%Y-%m-%d").month,
                 "scheduled_elapsed_time": scheduled_elapsed_time,
-                "origin_temp_f": float(request.form.get("origin_temp_f", DEFAULT_WEATHER["temp_f"])),
-                "origin_temp_known": True,
-                "origin_precip_in": float(request.form.get("origin_precip_in", DEFAULT_WEATHER["precip_in"])),
-                "origin_pressure": float(request.form.get("origin_pressure", DEFAULT_WEATHER["pressure"])),
-                "origin_visibility": float(request.form.get("origin_visibility", DEFAULT_WEATHER["visibility"])),
-                "origin_wind_speed": float(request.form.get("origin_wind_speed", DEFAULT_WEATHER["wind_speed"])),
+                "scheduled_hour": scheduled_hour,
+                "is_holiday": is_holiday_date(travel_date),
+                "origin_temp_f": _float_field(request.form, "origin_temp_f", DEFAULT_WEATHER["temp_f"]),
+                # True only if the user actually typed a real reading - if this field was left
+                # blank (using DEFAULT_WEATHER's placeholder), it's a guess, same as the chatbot's
+                # guessed weather, and must be flagged the same way. origin_temp_known was 100%
+                # correlated with US-vs-India in training, so the model leans on it heavily -
+                # mismatching it between two paths using the identical guessed number produces
+                # very different (wrong) predictions for the same real input.
+                "origin_temp_known": bool((request.form.get("origin_temp_f") or "").strip()),
+                "origin_precip_in": _float_field(request.form, "origin_precip_in", DEFAULT_WEATHER["precip_in"]),
+                "origin_pressure": _float_field(request.form, "origin_pressure", DEFAULT_WEATHER["pressure"]),
+                "origin_visibility": _float_field(request.form, "origin_visibility", DEFAULT_WEATHER["visibility"]),
+                "origin_wind_speed": _float_field(request.form, "origin_wind_speed", DEFAULT_WEATHER["wind_speed"]),
             }
 
             covered = is_route_covered(inputs["origin_airport"], inputs["destination_airport"])
@@ -335,6 +365,7 @@ def flight_delay():
                     origin_precip_in=inputs["origin_precip_in"],
                     origin_pressure=inputs["origin_pressure"], origin_visibility=inputs["origin_visibility"],
                     origin_wind_speed=inputs["origin_wind_speed"],
+                    scheduled_hour=inputs["scheduled_hour"], is_holiday=inputs["is_holiday"],
                 )
                 label = risk_label(prob)
                 result = {"probability": prob, "label": label, "inputs": inputs, "lookup_note": lookup_note}
@@ -350,11 +381,11 @@ def flight_delay():
                 return redirect(url_for("flight_delay"))
 
             budget = {
-                "flight_cost": float(request.form.get("flight_cost", 150)),
-                "hotel_cost": float(request.form.get("hotel_cost", 400)),
-                "food_cost": float(request.form.get("food_cost", 250)),
-                "transport_cost": float(request.form.get("transport_cost", 150)),
-                "sightseeing_cost": float(request.form.get("sightseeing_cost", 150)),
+                "flight_cost": _float_field(request.form, "flight_cost", 150),
+                "hotel_cost": _float_field(request.form, "hotel_cost", 400),
+                "food_cost": _float_field(request.form, "food_cost", 250),
+                "transport_cost": _float_field(request.form, "transport_cost", 150),
+                "sightseeing_cost": _float_field(request.form, "sightseeing_cost", 150),
             }
             priority = request.form.get("priority", "cost")
 
@@ -377,19 +408,36 @@ def flight_delay():
 def budget_trip():
     plan = None
     form_data = {}
+    transport_options = None
 
     if request.method == "POST":
         form_data = request.form.to_dict()
         start_date_str = request.form.get("start_date") or date.today().isoformat()
-        days = int(request.form.get("days", 5))
+        days = _int_field(request.form, "days", 5)
         start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
         return_date = start_date + timedelta(days=days)
+        stage = request.form.get("stage", "plan")
+
+        # Stage 1: just compare how to get there. Only modes with a real data
+        # source come back available - see transport_modes.py.
+        if stage == "compare":
+            transport_options = compare_transport_modes(
+                origin_place=request.form.get("origin_place", "").strip(),
+                destination_place=request.form.get("destination_place", "").strip(),
+                weekday=start_date.weekday(),
+            )
+            return render_template("budget_trip.html", plan=None, form_data=form_data,
+                                    transport_options=transport_options, **_dropdown_options())
 
         inputs = {
+            "origin_place": request.form.get("origin_place", "").strip(),
+            "destination_place": request.form.get("destination_place", "").strip(),
+            "transport_mode": request.form.get("transport_mode", "").strip(),
             "origin_airport": request.form.get("origin_airport", "").strip().upper(),
             "destination_airport": request.form.get("destination_airport", "").strip().upper(),
-            "destination_city": request.form.get("destination_city", "").strip(),
-            "total_budget": float(request.form.get("total_budget", 1000)),
+            "destination_city": (request.form.get("destination_city", "").strip()
+                                 or request.form.get("destination_place", "").strip()),
+            "total_budget": _float_field(request.form, "total_budget", 1000),
             "days": days,
             "start_date": start_date_str,
             "return_date": return_date.strftime("%Y-%m-%d"),
@@ -398,6 +446,12 @@ def budget_trip():
             "food_comfort": request.form.get("food_comfort", "standard"),
             "sightseeing_level": request.form.get("sightseeing_level", "moderate"),
         }
+
+        if not inputs["origin_airport"] and inputs["origin_place"]:
+            allowed = set(get_dataset_index()["airports"]) | INTL_AIRPORT_CODES
+            resolved = nearest_supported_airport(inputs["origin_place"], allowed)
+            if resolved:
+                inputs["origin_airport"] = resolved["airport_code"]
 
         plan = plan_budget_trip(
             origin_airport=inputs["origin_airport"],
@@ -412,12 +466,16 @@ def budget_trip():
             food_comfort=inputs["food_comfort"],
             sightseeing_level=inputs["sightseeing_level"],
         )
+        plan["transport_mode"] = inputs["transport_mode"]
+        if plan.get("auto_resolved_destination_airport"):
+            inputs["destination_airport"] = plan["auto_resolved_destination_airport"]
         narrative, mode = narrate_trip_plan(inputs, plan)
         plan["recommendation_text"] = narrative
         plan["recommendation_mode"] = mode
         db.save_budget_trip(session["user_id"], inputs, plan)
 
-    return render_template("budget_trip.html", plan=plan, form_data=form_data, **_dropdown_options())
+    return render_template("budget_trip.html", plan=plan, form_data=form_data,
+                            transport_options=transport_options, **_dropdown_options())
 
 
 # ---------------------------------------------------------------- admin
@@ -437,7 +495,8 @@ def admin():
         for row in db.get_all_budget_trips(limit=25)
     ]
     return render_template("admin.html", stats=stats, users=users, checks=checks, trips=trips,
-                            llm=llm_status())
+                            llm=llm_status(), model_metrics=load_model_metrics(),
+                            validation_examples=sample_validation_flights(6))
 
 
 # ---------------------------------------------------------------- chatbot
