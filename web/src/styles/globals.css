@@ -6,9 +6,11 @@
 
 @layer base {
   :root { color-scheme: dark; }
-  html { scroll-behavior: auto; -webkit-font-smoothing: antialiased; }
+  html { scroll-behavior: auto; -webkit-font-smoothing: antialiased; background: #03070d; }
   body {
-    @apply bg-void text-white/90 font-sans antialiased;
+    /* transparent on purpose: the WebGL canvas sits behind this.
+       An opaque body background would paint over the whole scene. */
+    @apply bg-transparent text-white/90 font-sans antialiased;
     overscroll-behavior-y: none;
   }
   ::selection { background: rgba(34, 211, 238, 0.25); }

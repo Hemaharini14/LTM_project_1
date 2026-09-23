@@ -26,7 +26,7 @@ export function Navbar({ progress }: { progress: number }) {
         <nav className="mx-auto flex max-w-[1500px] items-center justify-between px-6 py-5 sm:px-10">
           <a href="#hero" className="flex items-center gap-2.5">
             <Plane className="h-4 w-4 rotate-45 text-cyan" strokeWidth={1.5} />
-            <span className="font-display text-sm font-semibold tracking-[0.2em] text-white">AEROVA</span>
+            <span className="font-display text-sm font-semibold tracking-[0.2em] text-white">SmartRoute<span className="text-cyan">AI</span></span>
           </a>
 
           <div className="hidden items-center gap-9 md:flex">

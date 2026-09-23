@@ -1,5 +1,5 @@
 import { Reveal, SectionLabel, AnimatedNumber } from './ui';
-import { FEATURED_FLIGHT as F } from '../data/flightData';
+import { useLiveFlight } from '../data/useLiveFlight';
 
 /** Radial probability ring - aviation instrument, not a dashboard donut. */
 function ProbabilityRing({ value }: { value: number }) {
@@ -45,6 +45,7 @@ function Row({ k, v, accent }: { k: string; v: string; accent?: boolean }) {
 }
 
 export function DelayPrediction() {
+  const F = useLiveFlight();
   return (
     <section id="prediction" className="relative flex min-h-screen items-center py-28">
       <div className="mx-auto w-full max-w-[1500px] px-6 sm:px-10">
@@ -66,7 +67,7 @@ export function DelayPrediction() {
           <Reveal delay={0.2} className="lg:justify-self-end">
             <div className="glass glass-hair w-full max-w-[400px] p-8">
               <div className="flex items-center justify-between">
-                <span className="label">Flight AI Analysis</span>
+                <span className="label">{F.live ? 'Live Model Output' : 'Flight AI Analysis'}</span>
                 <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2.5 py-1 font-mono text-[9px] uppercase tracking-widest text-amber-300">
                   {F.riskLabel} Risk
                 </span>
@@ -74,12 +75,18 @@ export function DelayPrediction() {
 
               <div className="mt-7 flex justify-center"><ProbabilityRing value={F.delayProbability} /></div>
 
+              {F.live && (
+                <p className="mt-5 font-mono text-[9px] leading-relaxed text-white/30">
+                  Live from the trained model{F.modelAuc ? ` · held-out AUC ${F.modelAuc}` : ''}
+                  {F.sampleSize ? ` · duration from ${F.sampleSize.toLocaleString()} real delayed flights` : ''}
+                </p>
+              )}
               <div className="mt-7 rule" />
               <div className="mt-1 divide-y divide-white/[0.05]">
                 <Row k="Flight" v={F.code} />
                 <Row k="Route" v={`${F.from} → ${F.to}`} />
                 <Row k="Departure" v={F.departure} />
-                <Row k="Predicted delay" v={`${F.predictedDelayMin} MIN`} accent />
+                <Row k="Predicted delay" v={`${F.medianDelayMin} MIN`} accent />
               </div>
             </div>
           </Reveal>

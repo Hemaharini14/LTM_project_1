@@ -10,22 +10,46 @@
 import * as THREE from 'three';
 import { BEATS, clamp, type SectionId } from './scrollAnimations';
 
-type Key = { at: number; pos: [number, number, number]; look: [number, number, number]; fov: number };
+/**
+ * bias = how far to push the SUBJECT horizontally on screen, in world units.
+ * Positive moves it right, negative left. Applied along the camera's own right
+ * vector (not world X) so it holds at any camera angle - the overhead rotation
+ * shot needs the same "keep clear of the copy" behaviour as the hero.
+ */
+type Key = { at: number; pos: [number, number, number]; look: [number, number, number]; fov: number; bias: number };
 
 export const CAMERA_KEYS: Key[] = [
-  { at: BEATS.hero,        pos: [16, 4.5, 26],   look: [0, 0, 0],      fov: 42 },
-  { at: BEATS.prediction,  pos: [10, 1.5, 15],   look: [2, 0, 0],      fov: 38 },
-  { at: BEATS.causes,      pos: [-2, 3, 21],     look: [0, 0.5, 0],    fov: 46 },
-  { at: BEATS.rotation,    pos: [0, 30, 14],     look: [0, 0, -2],     fov: 50 },
-  { at: BEATS.explanation, pos: [7, 2, 17],      look: [0, 0, 0],      fov: 40 },
-  { at: BEATS.planner,     pos: [0, 2, 46],      look: [0, -2, 0],     fov: 45 },
-  { at: BEATS.trip,        pos: [6, 0, 30],      look: [0, -2, 0],     fov: 42 },
-  { at: BEATS.itinerary,   pos: [-8, 3, 34],     look: [0, -2, 0],     fov: 44 },
-  { at: BEATS.cta,         pos: [0, 8, 62],      look: [0, -4, 0],     fov: 50 },
+  { at: BEATS.hero,        pos: [16, 4.5, 26],   look: [0, 0, 0],      fov: 42, bias: 10.8 },
+  { at: BEATS.prediction,  pos: [14, 2, 24],     look: [2, 0, 0],      fov: 40, bias: 10.7 },
+  { at: BEATS.causes,      pos: [-2, 3, 21],     look: [0, 0.5, 0],    fov: 46, bias: 0 },
+  { at: BEATS.rotation,    pos: [0, 30, 14],     look: [0, 0, -2],     fov: 50, bias: 0 },
+  { at: BEATS.explanation, pos: [11, 2, 27],     look: [0, 0, 0],      fov: 42, bias: 10.8 },
+  { at: BEATS.planner,     pos: [0, 2, 46],      look: [0, -2, 0],     fov: 45, bias: 10.4 },
+  { at: BEATS.trip,        pos: [8, 0, 38],      look: [0, -2, 0],     fov: 42, bias: 6 },
+  { at: BEATS.itinerary,   pos: [-8, 3, 34],     look: [0, -2, 0],     fov: 44, bias: 0 },
+  { at: BEATS.cta,         pos: [0, 8, 62],      look: [0, -4, 0],     fov: 50, bias: 0 },
 ];
 
 const _pos = new THREE.Vector3();
 const _look = new THREE.Vector3();
+const _fwd = new THREE.Vector3();
+const _right = new THREE.Vector3();
+const UP = new THREE.Vector3(0, 1, 0);
+
+/**
+ * Shift the look target sideways so the subject sits clear of the copy.
+ * Below ~1024px the layout stacks full-width, so the bias is faded out and the
+ * subject returns to centre rather than being pushed off the edge.
+ */
+export function applyBias(pos: THREE.Vector3, look: THREE.Vector3, bias: number, aspect: number, width: number) {
+  if (Math.abs(bias) < 0.01) return look;
+  const responsive = width < 1024 ? 0 : Math.min(1, aspect / 1.6);
+  if (responsive <= 0) return look;
+  _fwd.subVectors(look, pos).normalize();
+  _right.crossVectors(_fwd, UP).normalize();
+  // moving the TARGET left makes the SUBJECT appear right, hence the negation
+  return look.addScaledVector(_right, -bias * responsive);
+}
 
 /** Interpolated camera state for a scroll position. */
 export function cameraAt(p: number) {
@@ -39,7 +63,7 @@ export function cameraAt(p: number) {
   const t = raw * raw * (3 - 2 * raw);           // ease both ends of every move
   _pos.set(lerp3(a.pos, b.pos, t)[0], lerp3(a.pos, b.pos, t)[1], lerp3(a.pos, b.pos, t)[2]);
   _look.set(lerp3(a.look, b.look, t)[0], lerp3(a.look, b.look, t)[1], lerp3(a.look, b.look, t)[2]);
-  return { pos: _pos, look: _look, fov: a.fov + (b.fov - a.fov) * t };
+  return { pos: _pos, look: _look, fov: a.fov + (b.fov - a.fov) * t, bias: a.bias + (b.bias - a.bias) * t };
 }
 
 function lerp3(a: [number, number, number], b: [number, number, number], t: number) {

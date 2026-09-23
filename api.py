@@ -568,6 +568,59 @@ def admin():
                             validation_examples=sample_validation_flights(6))
 
 
+@app.route("/api/showcase-flight")
+def api_showcase_flight():
+    """Real model output for the showcase landing page.
+
+    The showcase is the logged-out entry point, so this is deliberately public
+    and read-only: it runs the same trained model and the same historical
+    duration/cause lookup the product uses, on a caller-supplied route, and
+    returns exactly what those produce. No login, no writes, no free text
+    reaching anything but an airport-code lookup.
+
+    Inputs are clamped to codes the dataset actually covers - an uncovered route
+    would otherwise get a confident-looking score the model has no basis for.
+    """
+    index = get_dataset_index()
+    known = set(index["airports"]) | INTL_AIRPORT_CODES
+    carriers = set(index["carriers"])
+
+    carrier = (request.args.get("carrier", "AI") or "").upper()[:3]
+    origin = (request.args.get("from", "MAA") or "").upper()[:4]
+    dest = (request.args.get("to", "DEL") or "").upper()[:4]
+    hour = max(0, min(23, _int_field(request.args, "hour", 10)))
+
+    if origin not in known or dest not in known or origin == dest:
+        return {"available": False,
+                "reason": f"No trained flight data covers {origin} to {dest}."}, 200
+    if carrier not in carriers:
+        carrier = sorted(carriers)[0]
+
+    prob = predict_delay_probability(
+        carrier_code=carrier, origin_airport=origin, destination_airport=dest,
+        weekday=4, month=10, scheduled_elapsed_time=150,
+        origin_temp_f=DEFAULT_WEATHER["temp_f"], origin_precip_in=DEFAULT_WEATHER["precip_in"],
+        origin_pressure=DEFAULT_WEATHER["pressure"], origin_visibility=DEFAULT_WEATHER["visibility"],
+        origin_wind_speed=DEFAULT_WEATHER["wind_speed"], scheduled_hour=hour,
+    )
+    duration = estimate_delay_duration(carrier, origin, dest, hour)
+    metrics = load_model_metrics() or {}
+
+    return {
+        "available": True,
+        "carrier": carrier, "from": origin, "to": dest,
+        "delay_probability": round(prob, 4),
+        "risk_label": risk_label(prob),
+        # None when the lookup hasn't been built - the UI must not invent one
+        "median_delay_min": duration["median_min"] if duration else None,
+        "p90_delay_min": duration["p90_min"] if duration else None,
+        "top_cause": duration["top_cause"] if duration else None,
+        "causes": duration["causes"] if duration else {},
+        "sample_size": duration["sample_size"] if duration else None,
+        "model_auc": metrics.get("auc"),
+    }
+
+
 @app.route("/api/places")
 @login_required
 def api_places():

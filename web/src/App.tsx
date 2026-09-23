@@ -62,7 +62,7 @@ export default function App() {
 
       {/* Vignette + horizon wash: sits between the canvas and the copy so text
           always has contrast regardless of what the 3D scene is doing. */}
-      <div className="pointer-events-none fixed inset-0 -z-[5]"
+      <div className="pointer-events-none fixed inset-0 z-[1]"
            style={{ background: 'radial-gradient(120% 80% at 50% 0%, transparent 35%, rgba(3,7,13,.75) 100%)' }} />
 
       <Navbar progress={progress} />

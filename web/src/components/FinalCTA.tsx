@@ -35,7 +35,7 @@ export function FinalCTA() {
           <div className="flex items-center gap-2.5">
             <Plane className="h-4 w-4 rotate-45 text-cyan" strokeWidth={1.5} />
             <div>
-              <p className="font-display text-sm font-semibold tracking-[0.2em] text-white">AEROVA</p>
+              <p className="font-display text-sm font-semibold tracking-[0.2em] text-white">SmartRoute<span className="text-cyan">AI</span></p>
               <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-white/30">
                 AI-Powered Flight Intelligence
               </p>

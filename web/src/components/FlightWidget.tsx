@@ -15,7 +15,7 @@ const STATES: Record<string, { tone: 'ok' | 'warn' | 'info'; title: string; valu
   planner:     { tone: 'ok',   title: 'Trip Planner', value: 'READY', sub: 'Chennai → Delhi' },
   trip:        { tone: 'ok',   title: 'Itinerary Built', value: '₹18,740', sub: 'Within ₹25,000 budget' },
   itinerary:   { tone: 'ok',   title: 'Schedule', value: '2 DAYS', sub: '7 planned stops' },
-  cta:         { tone: 'ok',   title: 'Ready For Departure', value: 'AEROVA', sub: 'Travel with intelligence' },
+  cta:         { tone: 'ok',   title: 'Ready For Departure', value: 'SmartRouteAI', sub: 'Travel with intelligence' },
 };
 
 const TONE = {
@@ -30,7 +30,7 @@ export function FlightWidget({ progress }: { progress: number }) {
   const tone = TONE[s.tone];
 
   return (
-    <div className="pointer-events-none fixed bottom-7 left-6 z-40 hidden sm:block">
+    <div className="pointer-events-none fixed bottom-7 left-6 z-40 hidden [@media(min-width:1536px)_and_(min-height:820px)]:block">
       <div className="glass glass-hair w-[236px] px-5 py-4">
         <div className="flex items-center gap-2">
           <span className="relative flex h-1.5 w-1.5">

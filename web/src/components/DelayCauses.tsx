@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Reveal, SectionLabel } from './ui';
-import { DELAY_CAUSES, PREVIOUS_SECTOR } from '../data/flightData';
+import { PREVIOUS_SECTOR } from '../data/flightData';
+import { useLiveFlight } from '../data/useLiveFlight';
 
 /**
  * Causes orbit the aircraft with connection lines drawn back to centre.
@@ -10,6 +11,7 @@ import { DELAY_CAUSES, PREVIOUS_SECTOR } from '../data/flightData';
  */
 export function DelayCauses() {
   const [active, setActive] = useState(0);
+  const { causes: DELAY_CAUSES, live } = useLiveFlight();
 
   return (
     <section id="causes" className="relative flex min-h-screen items-center py-28">
@@ -79,7 +81,7 @@ export function DelayCauses() {
               transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
               className="glass glass-hair p-8"
             >
-              <span className="label">Dominant Factor</span>
+              <span className="label">{live ? 'Dominant Factor · Real Data' : 'Dominant Factor'}</span>
               <h3 className="display mt-3 text-2xl text-cyan-glow">{DELAY_CAUSES[active].label}</h3>
 
               <div className="mt-6 h-1 w-full overflow-hidden rounded-full bg-white/[0.06]">

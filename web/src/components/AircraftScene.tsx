@@ -8,7 +8,7 @@ import { Globe, latLonToVec3 } from './3d/Globe';
 import { Particles, Haze } from './3d/Particles';
 import { Airport } from './3d/Airport';
 import { FlightPath } from './3d/FlightPath';
-import { cameraAt, aircraftPose, globeReveal } from '../animations/cameraAnimations';
+import { cameraAt, applyBias, aircraftPose, globeReveal } from '../animations/cameraAnimations';
 import { BEATS, damp, range } from '../animations/scrollAnimations';
 import { ROTATION_LEGS } from '../data/flightData';
 
@@ -29,11 +29,14 @@ import { ROTATION_LEGS } from '../data/flightData';
 type Props = { progressRef: React.MutableRefObject<number>; quality: number };
 
 function CameraRig({ progressRef }: { progressRef: React.MutableRefObject<number> }) {
-  const { camera } = useThree();
+  const { camera, size } = useThree();
   const look = useRef(new THREE.Vector3());
 
   useFrame((_, dt) => {
-    const { pos, look: target, fov } = cameraAt(progressRef.current);
+    const { pos, look: target, fov, bias } = cameraAt(progressRef.current);
+    // Compose the shot: hold the subject clear of the copy on wide screens,
+    // recentre it once the layout stacks.
+    applyBias(pos, target, bias, size.width / size.height, size.width);
     // Damped, not snapped: scrubbing the scrollbar fast stays smooth and
     // reversing direction doesn't jerk.
     const k = 3.2;
@@ -147,7 +150,7 @@ function Lighting({ quality }: { quality: number }) {
 
 export function AircraftScene({ progressRef, quality }: Props) {
   return (
-    <div className="fixed inset-0 -z-10">
+    <div className="fixed inset-0 z-0">
       <Canvas
         shadows={quality > 0.6}
         dpr={[1, quality > 0.6 ? 2 : 1.4]}          // never render above 2x, phones capped lower
