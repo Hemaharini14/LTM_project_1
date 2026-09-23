@@ -17,7 +17,7 @@ import threading
 from datetime import date, datetime, timedelta
 from functools import wraps
 
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file
 from werkzeug.security import generate_password_hash, check_password_hash
 import markdown as _markdown
 import bleach
@@ -155,10 +155,23 @@ def _format_ts(iso_str: str) -> str:
 
 # ---------------------------------------------------------------- auth
 
+SHOWCASE_INDEX = os.path.join(PROJECT_ROOT, "static", "showcase", "index.html")
+
+
 @app.route("/")
 def index():
+    """Cinematic showcase for logged-out visitors, dashboard for signed-in users.
+
+    The showcase is a Vite/React/Three.js build (web/, built into
+    static/showcase/) served as a static file - it has no server state of its
+    own and its CTAs link straight into the real Flask pages. If it hasn't been
+    built, fall back to the original server-rendered landing page so the app
+    still works from a fresh clone without running npm.
+    """
     if session.get("user_id"):
         return redirect(url_for("home"))
+    if os.path.exists(SHOWCASE_INDEX):
+        return send_file(SHOWCASE_INDEX)
     return render_template("landing.html")
 
 

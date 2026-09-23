@@ -28,3 +28,7 @@ models/artifacts_backup/
 # OS junk
 .DS_Store
 Thumbs.db
+# Showcase frontend (web/) - source is tracked, build output is not.
+# Rebuild with: cd web && npm install && npm run build
+web/node_modules/
+static/showcase/
