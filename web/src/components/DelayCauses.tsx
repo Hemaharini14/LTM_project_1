@@ -11,7 +11,7 @@ import { useLiveFlight } from '../data/useLiveFlight';
  */
 export function DelayCauses() {
   const [active, setActive] = useState(0);
-  const { causes: DELAY_CAUSES, live } = useLiveFlight();
+  const { causes: DELAY_CAUSES, causesLive } = useLiveFlight();
 
   return (
     <section id="causes" className="relative flex min-h-screen items-center py-28">
@@ -81,7 +81,7 @@ export function DelayCauses() {
               transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
               className="glass glass-hair p-8"
             >
-              <span className="label">{live ? 'Dominant Factor · Real Data' : 'Dominant Factor'}</span>
+              <span className="label">{causesLive ? 'Dominant Factor · Real Data' : 'Dominant Factor · Illustrative'}</span>
               <h3 className="display mt-3 text-2xl text-cyan-glow">{DELAY_CAUSES[active].label}</h3>
 
               <div className="mt-6 h-1 w-full overflow-hidden rounded-full bg-white/[0.06]">

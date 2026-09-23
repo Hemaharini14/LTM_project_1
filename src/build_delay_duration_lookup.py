@@ -24,9 +24,14 @@ from a broader group rather than a fabricated one:
 Groups with fewer than MIN_SAMPLES real delayed flights are dropped rather than
 reported, since a median over three flights isn't worth showing.
 
-NOTE: cause attribution is US-only. The India source (Dataset.csv) records
-delay minutes but no cause breakdown, so India routes get duration with
-causes omitted rather than causes invented.
+India IS included, but for duration only. Dataset.csv records delay minutes
+with no cause breakdown, so those groups carry an empty causes map and the UI
+must show duration without a reason rather than borrowing the US split.
+
+Leaving India out entirely was worse than it sounds: every Indian route fell
+through all three tiers to __default__ and was served the US national average -
+same 43 min, same "late arriving aircraft", same 1,022,519 sample - which read
+as "every flight has the identical reason".
 
 Run: python build_delay_duration_lookup.py
 Output: outputs/delay_duration_lookup.json
@@ -38,12 +43,13 @@ import sys
 import pandas as pd
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from config import MONTHLY_FLIGHT_WEATHER_PATHS, OUTPUT_DIR
+from config import MONTHLY_FLIGHT_WEATHER_PATHS, INDIA_FLIGHT_WEATHER_CLEAN_PATH, OUTPUT_DIR
 
 LOOKUP_PATH = os.path.join(OUTPUT_DIR, "delay_duration_lookup.json")
 
 DELAY_THRESHOLD_MIN = 15      # same definition of "delayed" the classifier trains on
 MIN_SAMPLES = 30
+MIN_SAMPLES_SPARSE = 8      # India: real but much smaller source
 
 CAUSE_COLS = {
     "delay_carrier": "carrier",
@@ -76,6 +82,18 @@ def _summarize(group: pd.DataFrame) -> dict:
     }
 
 
+def _duration_only(group: pd.DataFrame) -> dict:
+    """Real delay length with no cause attribution, for sources that don't record it.
+    causes stays empty so callers show a duration without inventing a reason."""
+    d = group["departure_delay"]
+    return {
+        "median_min": int(d.median()),
+        "p90_min": int(d.quantile(0.90)),
+        "sample_size": int(len(group)),
+        "causes": {},
+    }
+
+
 def main():
     frames = []
     for path in MONTHLY_FLIGHT_WEATHER_PATHS:
@@ -93,6 +111,16 @@ def main():
     df = pd.concat(frames, ignore_index=True)
     for col in CAUSE_COLS:
         df[col] = df[col].fillna(0.0)
+
+    # India: duration only, no cause columns exist in that source.
+    india = pd.DataFrame()
+    if os.path.exists(INDIA_FLIGHT_WEATHER_CLEAN_PATH):
+        i = pd.read_csv(INDIA_FLIGHT_WEATHER_CLEAN_PATH, low_memory=False)
+        i = i[i["departure_delay"] >= DELAY_THRESHOLD_MIN]
+        if len(i):
+            india = i[["carrier_code", "origin_airport", "destination_airport", "departure_delay"]].copy()
+            india["route"] = india["origin_airport"] + "-" + india["destination_airport"]
+            print(f"  India: {len(india):,} delayed flights (duration only, no cause data)")
     df["route"] = df["origin_airport"] + "-" + df["destination_airport"]
     df["hour"] = pd.to_datetime(df["scheduled_departure_dt"], errors="coerce").dt.hour
     print(f"\nTotal real delayed flights: {len(df):,}")
@@ -115,6 +143,20 @@ def main():
         if len(g) >= MIN_SAMPLES:
             lookup[f"{origin}|{int(hour)}"] = _summarize(g)
     print(f"  airport+hour groups:  {len(lookup) - before:,}")
+
+    # India groups, added after the US ones so a route present in both keeps the
+    # richer US entry. Cause map is empty by construction, never borrowed.
+    if len(india):
+        added = 0
+        for (carrier, route), g in india.groupby(["carrier_code", "route"]):
+            if len(g) >= MIN_SAMPLES_SPARSE and f"{carrier}|{route}" not in lookup:
+                lookup[f"{carrier}|{route}"] = _duration_only(g)
+                added += 1
+        for route, g in india.groupby("route"):
+            if len(g) >= MIN_SAMPLES_SPARSE and route not in lookup:
+                lookup[route] = _duration_only(g)
+                added += 1
+        print(f"  India groups added:   {added:,}")
 
     lookup["__default__"] = _summarize(df)
 

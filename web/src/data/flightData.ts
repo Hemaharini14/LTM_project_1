@@ -8,9 +8,9 @@
  */
 export const FEATURED_FLIGHT = {
   code: 'AI 472',
-  from: 'MAA',
+  from: 'BOM',
   to: 'DEL',
-  fromCity: 'Chennai',
+  fromCity: 'Mumbai',
   toCity: 'Delhi',
   departure: '10:45 AM',
   arrival: '13:35',
@@ -38,7 +38,7 @@ export const ROTATION_LEGS = [
 ] as const;
 
 export const PREVIOUS_SECTOR = {
-  code: 'AI 471', from: 'BOM', to: 'MAA', arrivedLateMin: 31, impact: 'HIGH',
+  code: 'AI 471', from: 'BLR', to: 'BOM', arrivedLateMin: 31, impact: 'HIGH',
 } as const;
 
 export const AI_EXPLANATION =

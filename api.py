@@ -617,6 +617,11 @@ def api_showcase_flight():
         "top_cause": duration["top_cause"] if duration else None,
         "causes": duration["causes"] if duration else {},
         "sample_size": duration["sample_size"] if duration else None,
+        # Which tier answered. "overall" means we had nothing for this route and
+        # fell back to the national average - the UI must not present that as
+        # specific to the flight.
+        "basis": duration["basis"] if duration else None,
+        "basis_label": duration["basis_label"] if duration else None,
         "model_auc": metrics.get("auc"),
     }
 

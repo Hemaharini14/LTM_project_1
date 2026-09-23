@@ -14,6 +14,8 @@ import { FEATURED_FLIGHT, DELAY_CAUSES } from './flightData';
  */
 export type LiveFlight = {
   live: boolean;
+  /** Separate from `live`: some sources give real duration but no cause split. */
+  causesLive: boolean;
   code: string;
   from: string;
   to: string;
@@ -30,6 +32,7 @@ export type LiveFlight = {
 
 const FALLBACK: LiveFlight = {
   live: false,
+  causesLive: false,
   code: FEATURED_FLIGHT.code,
   from: FEATURED_FLIGHT.from,
   to: FEATURED_FLIGHT.to,
@@ -107,6 +110,7 @@ export function useLiveFlight(): LiveFlight {
           medianDelayMin: d.median_delay_min ?? FALLBACK.medianDelayMin,
           p90DelayMin: d.p90_delay_min ?? null,
           topCause: d.top_cause ?? null,
+          causesLive: Boolean(d.causes && Object.keys(d.causes).length),
           causes: d.causes && Object.keys(d.causes).length ? mergeCauses(d.causes) : FALLBACK.causes,
           sampleSize: d.sample_size ?? null,
           modelAuc: d.model_auc ?? null,
