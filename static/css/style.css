@@ -820,3 +820,5 @@ fieldset legend { color: var(--teal); }
 .why-card .cause-list li { grid-template-columns: minmax(150px,auto) 1fr 44px; }
 .why-val { font-style: normal; color: var(--teal); font-family: var(--mono, monospace); font-size: .8em; }
 .why-pts { font-family: monospace; font-size: .78rem; color: #fcd34d; text-align: right; }
+.flex-row { display: flex; justify-content: space-between; align-items: baseline; padding: 6px 0; }
+.divide > .flex-row + .flex-row { border-top: 1px solid rgba(255,255,255,.05); }

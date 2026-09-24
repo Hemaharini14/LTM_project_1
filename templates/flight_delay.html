@@ -116,6 +116,35 @@
       <span class="risk-label">{{ result.label }} risk</span>
     </div>
 
+    {% if result.rotation %}
+    <div class="duration-card">
+      <h4>Live aircraft check</h4>
+      {% if result.rotation.observed %}
+      <p class="duration-headline">
+        Inbound aircraft <strong>{{ result.rotation.icao24 }}</strong> flew
+        {{ result.rotation.prior_leg }}
+      </p>
+      <div class="divide">
+        <div class="flex-row"><span class="muted">Ground time before your departure</span>
+          <strong>{{ result.rotation.ground_time_min | round(0) | int }} min</strong></div>
+        <div class="flex-row"><span class="muted">Inbound running late by (inferred)</span>
+          <strong>{{ result.rotation.inferred_inbound_delay_min | round(0) | int }} min</strong></div>
+      </div>
+      <p class="dataset-note">
+        Real observed movement from the OpenSky Network — this is the actual aircraft due to
+        operate your flight. The landing time is measured; the inbound delay is inferred by
+        comparing the remaining ground time against a typical 50-minute turnaround, so treat it
+        as an estimate rather than a reading.
+      </p>
+      {% else %}
+      <p class="muted">
+        No live aircraft data for this flight — {{ result.rotation.reason }}.
+        Prediction uses schedule and weather only.
+      </p>
+      {% endif %}
+    </div>
+    {% endif %}
+
     {% if result.why and result.why.drivers %}
     <div class="duration-card why-card">
       <h4>Why this flight is at risk</h4>

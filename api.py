@@ -374,6 +374,21 @@ def flight_delay():
                 "origin_wind_speed": _float_field(request.form, "origin_wind_speed", DEFAULT_WEATHER["wind_speed"]),
             }
 
+            # Live aircraft rotation: find the real aircraft due to fly this, see
+            # where it has been today, and how much ground time is left before the
+            # SCHEDULED push. That fills prev_leg_arrival_delay, which the form
+            # cannot supply and which the model weights heavily.
+            rotation = None
+            if flight_number and carrier_code:
+                try:
+                    sched_ts = int(datetime.strptime(
+                        f"{travel_date} {scheduled_hour:02d}:{scheduled_minute:02d}",
+                        "%Y-%m-%d %H:%M").timestamp())
+                    rotation = live_rotation(carrier_code, flight_number,
+                                              inputs["origin_airport"], sched_ts)
+                except Exception as e:
+                    print(f"[api] live rotation lookup skipped: {e}")
+
             covered = is_route_covered(inputs["origin_airport"], inputs["destination_airport"])
             reference_flights = [] if covered else get_reference_flights(
                 inputs["origin_airport"], inputs["destination_airport"])
@@ -403,6 +418,10 @@ def flight_delay():
                     origin_pressure=inputs["origin_pressure"], origin_visibility=inputs["origin_visibility"],
                     origin_wind_speed=inputs["origin_wind_speed"],
                     scheduled_hour=inputs["scheduled_hour"], is_holiday=inputs["is_holiday"],
+                    # Only supplied when a real aircraft was actually observed;
+                    # None keeps the model on its prev_leg_known=0 path.
+                    prev_leg_arrival_delay=(rotation.get("inferred_inbound_delay_min")
+                                            if rotation and rotation.get("observed") else None),
                 )
                 label = risk_label(prob)
                 result = {"probability": prob, "label": label, "inputs": inputs, "lookup_note": lookup_note}
