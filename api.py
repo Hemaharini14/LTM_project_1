@@ -17,7 +17,8 @@ import threading
 from datetime import date, datetime, timedelta
 from functools import wraps
 
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file
+from flask import (Flask, render_template, request, redirect, url_for, session,
+                   flash, send_file, send_from_directory)
 from werkzeug.security import generate_password_hash, check_password_hash
 import markdown as _markdown
 import bleach
@@ -31,6 +32,7 @@ from delay_duration import estimate_delay_duration
 from recovery_graph import build_graph
 from recovery_tools import get_dataset_index, is_route_covered, lookup_flight_by_number
 from trip_planner import plan_budget_trip
+from trip_graph import plan_trip as run_trip_graph
 from transport_modes import compare_transport_modes, describe_mode
 from places import autocomplete_places
 from maps import nearest_supported_airport
@@ -566,6 +568,82 @@ def admin():
     return render_template("admin.html", stats=stats, users=users, checks=checks, trips=trips,
                             llm=llm_status(), model_metrics=load_model_metrics(),
                             validation_examples=sample_validation_flights(6))
+
+
+def _cors(resp):
+    """Open CORS for the planner API so a frontend served from a dev server
+    (vite on 5173, live-server on 5500) can call it. Read-only endpoints only."""
+    resp.headers["Access-Control-Allow-Origin"] = request.headers.get("Origin", "*")
+    resp.headers["Access-Control-Allow-Methods"] = "POST, GET, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return resp
+
+
+@app.route("/api/plan-trip", methods=["POST", "OPTIONS"])
+def api_plan_trip():
+    """Budget-checked itinerary: flight, hotel, attractions, total.
+
+    Runs the LangGraph pipeline in src/trip_graph.py, which sequences the three
+    existing modules - the trained classifier scores every candidate flight, the
+    recovery rule swaps a High-risk pick for a genuinely safer one, and the
+    budget optimiser fits the stay and sights into what is left.
+
+    422 on invalid input rather than silently coercing: a zero budget or a
+    reversed date is a mistake worth surfacing, not something to guess around.
+    """
+    if request.method == "OPTIONS":
+        return _cors(app.make_response(("", 204)))
+
+    body = request.get_json(silent=True) or {}
+    errors = []
+
+    from_city = str(body.get("from_city", "")).strip()
+    to_city = str(body.get("to_city", "")).strip()
+    if not from_city or not to_city:
+        errors.append("from_city and to_city are required.")
+    elif from_city.lower() == to_city.lower():
+        errors.append("from_city and to_city must differ.")
+
+    try:
+        travelers = int(body.get("travelers", 1))
+        if travelers < 1:
+            errors.append("travelers must be at least 1.")
+    except (TypeError, ValueError):
+        travelers = 1
+        errors.append("travelers must be a whole number.")
+
+    try:
+        budget = float(body.get("budget", 0))
+        if budget <= 0:
+            errors.append("budget must be greater than zero.")
+    except (TypeError, ValueError):
+        budget = 0.0
+        errors.append("budget must be a number.")
+
+    raw_date = str(body.get("date", "")).strip()
+    travel_date = None
+    try:
+        travel_date = datetime.strptime(raw_date, "%Y-%m-%d").date()
+    except ValueError:
+        errors.append("date must be in YYYY-MM-DD format.")
+
+    if errors:
+        return _cors(app.make_response(({"error": "Invalid request", "details": errors}, 422)))
+
+    result = run_trip_graph(from_city, to_city, travel_date, travelers, budget)
+    return _cors(app.make_response((result, 200)))
+
+
+@app.route("/frontend/<path:filename>")
+def frontend_asset(filename):
+    """Static assets for the planner page."""
+    return send_from_directory(os.path.join(PROJECT_ROOT, "frontend"), filename)
+
+
+@app.route("/plan")
+def plan_page():
+    """Vanilla-JS planner UI. Separate from the 3D showcase at /, which stays."""
+    return send_file(os.path.join(PROJECT_ROOT, "frontend", "index.html"))
 
 
 @app.route("/api/showcase-flight")

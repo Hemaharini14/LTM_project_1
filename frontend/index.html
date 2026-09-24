@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Plan a trip · SmartRouteAI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/frontend/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2.5 1.8V22l3.5-1 3.5 1v-1.2L12 19v-5.5l9 2.5z"/></svg>
+      <span>SmartRoute<em>AI</em></span>
+    </a>
+    <nav><a href="/flight-delay">Delay check</a><a href="/budget-trip">Full planner</a></nav>
+  </header>
+
+  <main>
+    <h1 class="page-title">Plan a trip</h1>
+    <p class="page-sub">One flight, one stay, the sights — checked against your budget.</p>
+
+    <!-- INPUT PANEL -->
+    <form class="panel" id="trip-form" novalidate>
+      <div class="fields">
+        <label class="field">
+          <span class="flabel"><svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z"/></svg>From</span>
+          <input id="from_city" value="Chennai" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="field">
+          <span class="flabel"><svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z"/></svg>To</span>
+          <input id="to_city" value="Delhi" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="field">
+          <span class="flabel"><svg viewBox="0 0 24 24"><path d="M7 2v2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2V2h-2v2H9V2H7zm12 8v10H5V10h14z"/></svg>Date</span>
+          <input id="date_display" value="12 OCT" readonly>
+          <input id="date" type="date" value="2026-10-12" class="date-native">
+        </label>
+        <label class="field">
+          <span class="flabel"><svg viewBox="0 0 24 24"><path d="M16 11a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm-8 0a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-2.7 0-8 1.34-8 4v3h10v-3c0-1 .4-2 1.2-2.8A13 13 0 0 0 8 13zm8 0c-.6 0-1.3.06-2 .16A5 5 0 0 1 16 17v3h8v-3c0-2.66-5.3-4-8-4z"/></svg>Travelers</span>
+          <input id="travelers" type="number" min="1" max="9" value="2">
+        </label>
+        <label class="field">
+          <span class="flabel"><svg viewBox="0 0 24 24"><path d="M21 7H5a1 1 0 0 1 0-2h15V3H5a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h16a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1zm-3 8a2 2 0 1 1 2-2 2 2 0 0 1-2 2z"/></svg>Budget</span>
+          <input id="budget_display" value="₹25,000" inputmode="numeric">
+        </label>
+      </div>
+      <div class="panel-foot">
+        <button type="submit" class="cta" id="submit">
+          <span class="cta-text">Plan my trip</span><span class="cta-arrow">→</span>
+        </button>
+      </div>
+    </form>
+
+    <div id="error" class="errorcard" hidden></div>
+
+    <!-- RESULTS -->
+    <section class="results" id="results" hidden>
+      <article class="card" data-card="flight">
+        <span class="clabel">Flight</span>
+        <strong class="cvalue" id="r-flight">—</strong>
+        <span class="csub" id="r-flight-sub">—</span>
+        <span class="tag" id="r-rerouted" hidden>Rerouted</span>
+      </article>
+      <article class="card" data-card="hotel">
+        <span class="clabel">Hotel</span>
+        <strong class="cvalue" id="r-hotel">—</strong>
+        <span class="csub" id="r-hotel-sub">—</span>
+      </article>
+      <article class="card" data-card="sights">
+        <span class="clabel">Attractions</span>
+        <strong class="cvalue" id="r-sights">—</strong>
+        <span class="csub" id="r-sights-sub">—</span>
+      </article>
+      <article class="card card--total" data-card="total">
+        <span class="clabel">Total</span>
+        <strong class="cvalue accent" id="r-total">—</strong>
+        <span class="csub" id="r-total-sub">—</span>
+      </article>
+
+      <div class="badge" id="badge" hidden>
+        <span class="badge-head"><i class="dot"></i>Itinerary built</span>
+        <strong class="badge-status" id="badge-status">READY</strong>
+        <span class="badge-sub" id="badge-route">—</span>
+      </div>
+    </section>
+  </main>
+
+  <script src="/frontend/app.js"></script>
+</body>
+</html>
