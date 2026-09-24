@@ -13,6 +13,10 @@ subtracting an observed time from a scheduled one the caller supplies.
 
 Two things are therefore offered:
 
+Because identification depends on having already seen the flight depart, all of
+this describes flights that have flown - useful for reconciling a past
+prediction against what happened, not for scoring one that has not left yet.
+
   prior_leg(...)       the aircraft's previous leg and when it actually landed.
                        With a scheduled arrival, that becomes real delay minutes.
   turnaround_min(...)  the observed ground time between that landing and the
@@ -71,6 +75,12 @@ IATA_TO_ICAO_AIRLINE = {
 # to translate an observed turnaround into "how late was the inbound", and
 # reported as an inference, never as a measurement.
 TYPICAL_TURNAROUND_MIN = 50.0
+
+# How far either side of a scheduled push the live check is worth attempting.
+# Receivers report what has ALREADY flown, so a departure days out has no
+# observable aircraft assigned to it yet and the search window around it lies
+# entirely in the future - the lookup can only come back empty.
+LIVE_WINDOW_H = 6
 
 _CLIENT = httpx.Client(timeout=45)
 _token: dict = {"value": None, "expires": 0.0}
@@ -221,7 +231,16 @@ def callsign_for(carrier_iata: str, flight_number: str) -> str | None:
 
 def live_rotation(carrier_iata: str, flight_number: str, origin_iata: str,
                    scheduled_departure_ts: int) -> dict:
-    """Pre-departure view of the aircraft due to operate this flight.
+    """The aircraft that operated this flight, and how its inbound leg went.
+
+    RETROSPECTIVE ONLY, and that is a hard limit rather than a gap to close
+    here. The aircraft is identified by finding this flight's own departure in
+    the receiver feed, so the departure has to have happened: a DEL query
+    covering the next six hours returns nothing at all, because no receiver has
+    seen those flights yet. OpenSky carries no schedules and no tail
+    assignments, so nothing in it can say which airframe is *due* to operate a
+    future flight. Callers predicting a future departure will get observed=False
+    and should keep their prev_leg_known=0 path.
 
     Deliberately measures the gap to the SCHEDULED departure, not the actual
     one. Actual departure is unknown before the fact, and using it would leak
@@ -231,10 +250,24 @@ def live_rotation(carrier_iata: str, flight_number: str, origin_iata: str,
     Returns an inferred inbound delay: if an aircraft that normally gets ~50
     minutes on the ground only has 20 left before its scheduled push, roughly
     30 minutes of that has already been eaten by a late inbound.
+
+    Skipped entirely more than LIVE_WINDOW_H ahead of the scheduled departure,
+    where the answer is structurally unavailable rather than merely missing.
     """
     cs = callsign_for(carrier_iata, flight_number)
     if not cs:
         return {"observed": False, "reason": "no ICAO callsign known for this carrier"}
+
+    # Asking about a flight that has not been flown towards yet is not a failed
+    # observation, it is a question that cannot be answered, and saying "not
+    # seen" would misreport it as the former. Skip the two API calls too.
+    hours_out = (scheduled_departure_ts - time.time()) / 3600.0
+    if hours_out > LIVE_WINDOW_H:
+        return {
+            "observed": False, "too_early": True, "callsign": cs, "hours_out": round(hours_out, 1),
+            "reason": (f"departure is {hours_out / 24:.0f} day(s) out"
+                       if hours_out >= 24 else f"departure is {hours_out:.0f}h out"),
+        }
 
     icao24 = find_aircraft(cs, origin_iata, scheduled_departure_ts)
     if not icao24:

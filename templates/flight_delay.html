@@ -136,6 +136,12 @@
         comparing the remaining ground time against a typical 50-minute turnaround, so treat it
         as an estimate rather than a reading.
       </p>
+      {% elif result.rotation.too_early %}
+      <p class="muted">
+        No live aircraft data — {{ result.rotation.reason }}. The receiver network reports
+        aircraft that have already flown, so it cannot yet say which airframe will operate a
+        future flight. Prediction uses schedule and weather only.
+      </p>
       {% else %}
       <p class="muted">
         No live aircraft data for this flight — {{ result.rotation.reason }}.
