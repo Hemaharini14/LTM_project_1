@@ -30,7 +30,7 @@ import db
 from predict_delay_v2 import predict_delay_probability, risk_label
 from delay_duration import estimate_delay_duration
 from explain_delay import explain as explain_delay
-from opensky import live_rotation
+from opensky import bbox_for_route, callsign_for, live_rotation, live_traffic
 from recovery_graph import build_graph
 from recovery_tools import get_dataset_index, is_route_covered, lookup_flight_by_number
 from trip_planner import plan_budget_trip
@@ -688,6 +688,42 @@ def frontend_asset(filename):
 def plan_page():
     """Vanilla-JS planner UI. Separate from the 3D showcase at /, which stays."""
     return send_file(os.path.join(PROJECT_ROOT, "frontend", "index.html"))
+
+
+@app.route("/api/live-traffic")
+def api_live_traffic():
+    """Aircraft currently flying the corridor between two airports.
+
+    The OpenSky credentials stay server-side - the browser asks this endpoint
+    for a route, never the network directly. Positions are real transponder
+    reports, which is the one question the network can answer about a flight
+    that has not departed: not which airframe is assigned to it, but what is
+    in that airspace right now.
+
+    Unknown airport codes return an empty list rather than an error, so the map
+    simply does not draw instead of breaking the page around it.
+    """
+    origin = (request.args.get("origin") or "").strip().upper()[:4]
+    dest = (request.args.get("dest") or "").strip().upper()[:4]
+    box = bbox_for_route(origin, dest)
+    if not box:
+        return {"aircraft": [], "route": None,
+                "note": "no published coordinates for one of these airports"}
+
+    from reference_data import AIRPORT_COORDS
+    mine = callsign_for(request.args.get("carrier", ""), request.args.get("flight", ""))
+    aircraft = live_traffic(box, highlight_callsign=mine)
+    return {
+        "aircraft": aircraft,
+        "route": {
+            "origin": {"iata": origin, "lat": AIRPORT_COORDS[origin][0],
+                       "lon": AIRPORT_COORDS[origin][1]},
+            "destination": {"iata": dest, "lat": AIRPORT_COORDS[dest][0],
+                            "lon": AIRPORT_COORDS[dest][1]},
+        },
+        "your_callsign": mine,
+        "count": len(aircraft),
+    }
 
 
 @app.route("/api/showcase-flight")

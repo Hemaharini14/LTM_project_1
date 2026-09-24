@@ -299,6 +299,74 @@ def live_rotation(carrier_iata: str, flight_number: str, origin_iata: str,
     }
 
 
+# Live positions change every few seconds, but a page refresh does not need a
+# fresh fetch - and every fetch spends from a 4,000/day credit budget shared by
+# all viewers. A short TTL keyed on the rounded box means a dozen people looking
+# at the same route cost one call.
+_TRAFFIC_TTL_S = 20.0
+_traffic_cache: dict[tuple, tuple[float, list]] = {}
+
+
+def bbox_for_route(origin_iata: str, dest_iata: str, pad_deg: float = 1.5) -> tuple | None:
+    """A lat/lon box covering both airports and the airspace between them.
+
+    Returns None when either airport is outside AIRPORT_COORDS, which is the
+    caller's cue to skip the map rather than draw an empty one.
+    """
+    from reference_data import AIRPORT_COORDS
+    a = AIRPORT_COORDS.get((origin_iata or "").upper())
+    b = AIRPORT_COORDS.get((dest_iata or "").upper())
+    if not a or not b:
+        return None
+    lats, lons = (a[0], b[0]), (a[1], b[1])
+    return (min(lats) - pad_deg, min(lons) - pad_deg,
+            max(lats) + pad_deg, max(lons) + pad_deg)
+
+
+def live_traffic(bbox: tuple, highlight_callsign: str | None = None) -> list[dict]:
+    """Aircraft currently airborne (or taxiing) inside `bbox`.
+
+    Unlike everything else in this module, this needs no schedule and no tail
+    assignment - it is simply where the transponders are right now, which is the
+    one thing the network can always answer. Empty list on any failure.
+    """
+    key = tuple(round(v, 1) for v in bbox)
+    hit = _traffic_cache.get(key)
+    now = time.time()
+    if hit and now - hit[0] < _TRAFFIC_TTL_S:
+        rows = hit[1]
+    else:
+        lamin, lomin, lamax, lomax = bbox
+        body = _get("/states/all", {"lamin": lamin, "lomin": lomin,
+                                    "lamax": lamax, "lomax": lomax})
+        if not body or not isinstance(body, dict):
+            return []
+        rows = body.get("states") or []
+        _traffic_cache[key] = (now, rows)
+
+    want = (highlight_callsign or "").replace(" ", "").upper()
+    out = []
+    for r in rows:
+        # State vectors are positional: 0 icao24, 1 callsign, 5 lon, 6 lat,
+        # 7 barometric altitude, 8 on_ground, 9 velocity m/s, 10 true track.
+        lat, lon = r[6], r[5]
+        if lat is None or lon is None:
+            continue
+        cs = (r[1] or "").strip().upper()
+        out.append({
+            "icao24": r[0],
+            "callsign": cs or None,
+            "lat": round(lat, 4),
+            "lon": round(lon, 4),
+            "heading": round(r[10], 1) if r[10] is not None else None,
+            "altitude_ft": round(r[7] * 3.28084) if r[7] is not None else None,
+            "speed_kt": round(r[9] * 1.94384) if r[9] is not None else None,
+            "on_ground": bool(r[8]),
+            "is_yours": bool(want and cs and (cs == want or cs.startswith(want))),
+        })
+    return out
+
+
 if __name__ == "__main__":
     import io
     from datetime import datetime, timezone

@@ -822,3 +822,43 @@ fieldset legend { color: var(--teal); }
 .why-pts { font-family: monospace; font-size: .78rem; color: #fcd34d; text-align: right; }
 .flex-row { display: flex; justify-content: space-between; align-items: baseline; padding: 6px 0; }
 .divide > .flex-row + .flex-row { border-top: 1px solid rgba(255,255,255,.05); }
+
+
+/* --- Live traffic map (flight-delay result) -------------------------------
+   Leaflet ships its own light chrome; these overrides sit it inside the dark
+   panel instead of punching a white hole through it. */
+.flight-map {
+  height: 340px;
+  width: 100%;
+  margin-top: 0.75rem;
+  border-radius: 12px;
+  border: 1px solid var(--hairline);
+  background: #03070d;
+  z-index: 0;              /* keep tiles under the sticky header and chat panel */
+}
+.flight-map .leaflet-container { background: #03070d; }
+.flight-map .leaflet-control-attribution {
+  background: rgba(3, 7, 13, 0.82);
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+.flight-map .leaflet-control-attribution a { color: var(--teal); }
+.flight-map .leaflet-control-zoom a {
+  background: #0d1726;
+  color: var(--ink);
+  border-color: var(--hairline);
+}
+.flight-map .leaflet-control-zoom a:hover { background: var(--teal-light); }
+.flight-map .leaflet-popup-content-wrapper,
+.flight-map .leaflet-popup-tip {
+  background: #0d1726;
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+.flight-map .leaflet-tooltip {
+  background: #0d1726;
+  color: var(--ink);
+  border: 1px solid var(--hairline);
+}
+.flight-map .leaflet-tooltip::before { border-top-color: var(--hairline); }
+.plane-icon { transition: transform 0.4s linear; }
