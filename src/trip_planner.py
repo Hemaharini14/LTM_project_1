@@ -22,10 +22,18 @@ from recovery_tools import get_destination_weather, is_route_covered, get_datase
 from budget_optimizer import validate_hotel_budget
 from intl_reference import food_spots_for, INTL_AIRPORT_CODES
 from llm_utils import suggest_destination_content
-from maps import geocode_hotel, osm_embed_url, nearest_supported_airport, route_airport_to_place
+from maps import (geocode_city, geocode_hotel, osm_embed_url, nearest_supported_airport,
+                  route_airport_to_place)
 from sightseeing import get_real_sightseeing, split_common_and_hidden
+from verify_places import confirm_all
 from places import find_real_hotels
 from itinerary_optimizer import optimize_itinerary
+
+# A city's landmarks do not change between requests, but rediscovering them
+# costs an LLM call plus a round of geocoder confirmations - about fourteen
+# seconds inside the request. Keyed on the city, so the second plan for the
+# same place pays nothing.
+_WELL_KNOWN_CACHE: dict[str, list] = {}
 
 # Comfort level -> multiplier applied to that category's real/baseline share
 LEVEL_MULTIPLIER = {"budget": 0.7, "standard": 1.0, "luxury": 1.4}
@@ -167,8 +175,47 @@ def plan_budget_trip(
     pool_size = min(max(days * per_day * 3, 20), 60)
     _pool = get_real_sightseeing(destination_city, limit=pool_size) if destination_city else []
     _pool_common, _pool_hidden = split_common_and_hidden(_pool)
+
+    # Geoapify knows what is a real attraction but not which ones people go to,
+    # so for somewhere like Ooty it returns a Thread Garden and a wax museum
+    # while missing Ooty Lake, the Botanical Garden and Doddabetta. The model
+    # names those immediately - they are documented everywhere - so let it
+    # propose the well-known list, then confirm every name against a geocoder
+    # and drop whatever cannot be found. Anything left is a real place.
+    # A threshold, not an emptiness check: Chennai's pool does carry two
+    # wiki-tagged entries - a square and a statue of Sir Thomas Munro - and
+    # treating "has any" as "has enough" let those stand as the city's headline
+    # sights while Marina Beach and Fort St. George never got proposed.
+    if len(_pool_common) < 4 and destination_city and city_key.lower() in _WELL_KNOWN_CACHE:
+        _pool_common = _WELL_KNOWN_CACHE[city_key.lower()] + _pool_common
+    elif len(_pool_common) < 4 and destination_city:
+        _geo = geocode_city(city_key) or geocode_city(destination_city)
+        ai = ai_data() if _geo else None
+        _named = [s.get("name") for s in (ai or {}).get("sightseeing", []) if s.get("name")]
+        if _named and _geo:
+            _seen = {(sp.get("name") or "").strip().lower() for sp in _pool_common + _pool_hidden}
+            _confirmed = []
+            for c in confirm_all(_named[:10], city_key, _geo["lat"], _geo["lon"]):
+                if c["name"].strip().lower() in _seen:
+                    continue
+                _seen.add(c["name"].strip().lower())
+                _confirmed.append({
+                    "name": c["name"],
+                    "area": destination_city,
+                    "note": f"Well-known spot · confirmed via {c['confirmed_by']}",
+                    "well_known": True,
+                    "lat": c.get("lat"), "lon": c.get("lon"),
+                })
+            # Ahead of the wiki-tagged pool, not behind it. That tag marks a
+            # place as documented, not as somewhere anyone plans a day around -
+            # it promotes a statue of Sir Thomas Munro over Marina Beach - so
+            # the names that survived confirmation lead.
+            _pool_common = _confirmed + _pool_common
+            if _confirmed:
+                _WELL_KNOWN_CACHE[city_key.lower()] = _confirmed
+
     sightseeing_spots = _pool_common + _pool_hidden
-    sightseeing_source = "real" if sightseeing_spots else "none"
+    sightseeing_source = ("real" if _pool_hidden or _pool_common else "none")
     if not sightseeing_spots:
         ai = ai_data()
         if ai:

@@ -81,6 +81,41 @@ def llm_status() -> dict:
     return {"configured": get_llm() is not None, "provider": provider or None, "key_present": key_present}
 
 
+def _narration_digest(inputs: dict, plan: dict) -> dict:
+    """The few dozen numbers a 120-word summary can actually use.
+
+    Keeps the top option from each list rather than every option, and the
+    counts rather than the contents - "4 sightseeing spots" is all the summary
+    needs to say, where the spots themselves are thousands of tokens.
+    """
+    def top(key, fields):
+        rows = plan.get(key) or []
+        return {f: rows[0].get(f) for f in fields if f in rows[0]} if rows else None
+
+    return {
+        "trip": {
+            "from": inputs.get("origin_airport"), "to": inputs.get("destination_airport"),
+            "city": inputs.get("destination_city"), "days": inputs.get("days"),
+            "nights": plan.get("nights"), "budget_usd": inputs.get("total_budget"),
+        },
+        "outbound": top("outbound_flights",
+                        ["carrier", "flight_number", "risk_label", "price_usd"]),
+        "return": top("return_flights",
+                      ["carrier", "flight_number", "risk_label", "price_usd"]),
+        "hotel": top("hotel_options", ["hotel_type", "median_nightly_rate_usd"]),
+        "budget_breakdown": plan.get("budget_breakdown"),
+        "daily_food_budget_usd": plan.get("daily_food_budget_usd"),
+        "daily_transport_budget_usd": plan.get("daily_transport_budget_usd"),
+        "counts": {
+            "sightseeing_well_known": len(plan.get("sightseeing_common") or []),
+            "sightseeing_lesser_known": len(plan.get("sightseeing_hidden") or []),
+            "days_planned": len(plan.get("day_plan") or []),
+        },
+        "within_budget": plan.get("optimizer_feasible"),
+        "shortfall_usd": plan.get("optimizer_shortfall_usd"),
+    }
+
+
 def narrate_trip_plan(inputs: dict, plan: dict) -> tuple[str, str]:
     """Returns (narrative_text, mode) for the budget trip planner, mirroring
     recovery_graph.py's grounded-narration pattern (real data in, narration out)."""
@@ -89,7 +124,7 @@ def narrate_trip_plan(inputs: dict, plan: dict) -> tuple[str, str]:
     best_ret = plan["return_flights"][0] if plan.get("return_flights") else None
     best_hotel = plan["hotel_options"][0] if plan.get("hotel_options") else None
 
-    if llm is None:
+    def deterministic() -> str:
         parts = [f"Trip from {inputs['origin_airport']} to {inputs['destination_airport']}, "
                  f"{inputs['days']} day(s), budget ${inputs['total_budget']:.0f}."]
         if best_out:
@@ -102,18 +137,32 @@ def narrate_trip_plan(inputs: dict, plan: dict) -> tuple[str, str]:
             parts.append(f"Stay: {best_hotel['hotel_type']} tier, ~${best_hotel['median_nightly_rate_usd']}/night.")
         parts.append(f"Budget split across flight/hotel/food/transport/sightseeing totals "
                      f"${plan['budget_breakdown']['total']:.0f}.")
-        return " ".join(parts), "deterministic (no LLM key configured)"
+        return " ".join(parts)
+
+    if llm is None:
+        return deterministic(), "deterministic (no LLM key configured)"
 
     from langchain_core.messages import SystemMessage, HumanMessage
     system = ("You are a travel planning assistant. Summarize this trip plan and explain the "
               "reasoning behind the budget split in under 120 words, using ONLY the data given "
               "below. Do not invent flights, hotels, prices, or points of interest beyond what's given.")
-    human = json.dumps({"trip_inputs": inputs, "plan": plan}, default=str)
+    # Send a digest, not the plan. Serialised whole, a plan runs to several
+    # thousand tokens - most of it sightseeing lists and per-day itineraries the
+    # summary never mentions - and on an 8,000 tokens-per-minute tier a single
+    # narration could exceed the entire minute's budget on its own and come back
+    # 429. Everything the summary can actually talk about is here.
+    human = json.dumps(_narration_digest(inputs, plan), default=str)
     try:
         result = llm.invoke([SystemMessage(content=system), HumanMessage(content=human)])
         return result.content, f"LLM ({os.getenv('LLM_PROVIDER')})"
     except Exception as e:
-        return f"[LLM error: {e}] Falling back to raw data below.", "error-fallback"
+        # The plan itself is complete and real either way - narration is the only
+        # thing lost. Showing an API error blob where the summary should be makes
+        # a working plan look broken, so degrade to the deterministic wording and
+        # say plainly why, keeping the detail in the log for whoever is debugging.
+        print(f"[llm_utils] narration failed, using deterministic summary: {e}")
+        reason = "rate limit" if "429" in str(e) or "rate_limit" in str(e) else "unavailable"
+        return deterministic(), f"deterministic (AI narration {reason})"
 
 
 def suggest_destination_content(destination_city: str, sightseeing_count: int = 4) -> dict | None:
