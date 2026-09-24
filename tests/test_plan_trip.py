@@ -83,12 +83,33 @@ def test_impossible_budget_reports_over_budget_with_cheapest_plan(client):
 
 # ------------------------------------------------------------------ 4
 def test_high_risk_flight_is_rerouted(client):
-    """Mumbai->Delhi's cheapest option scores High, so recovery should swap it."""
-    d = plan(client, from_city="Mumbai", to_city="Delhi").get_json()
+    """A cheapest-option that scores High must be swapped for a safer one.
 
-    assert d["flight"]["was_rerouted"] is True
-    assert d["flight"]["disruption_risk"] <= 0.30, "reroute must land on a lower risk"
-    assert any("Rerouted" in a for a in d["adjustments"])
+    Deliberately does not name the route. This used to assert on Mumbai->Delhi,
+    whose cheapest flight scored High in the generated catalogue - then real
+    schedules replaced those entries, a different flight became cheapest, and
+    the test failed while the reroute logic it was meant to cover was untouched.
+    The behaviour is the contract; which city pair happens to trigger it is
+    fixture detail that real data is free to change.
+    """
+    routes = [("Mumbai", "Delhi"), ("Delhi", "Mumbai"), ("Chennai", "Mumbai"),
+              ("Bengaluru", "Delhi"), ("Kolkata", "Delhi")]
+
+    rerouted = []
+    for src, dst in routes:
+        d = plan(client, from_city=src, to_city=dst).get_json()
+        flight = d.get("flight")
+        if not flight:
+            continue
+        # The invariant, on every route: a reroute must end up below the
+        # threshold, never swap one high-risk flight for another.
+        if flight["was_rerouted"]:
+            assert flight["disruption_risk"] <= 0.30, f"{src}->{dst} rerouted but still risky"
+            assert any("Rerouted" in a for a in d["adjustments"])
+            rerouted.append(f"{src}->{dst}")
+
+    assert rerouted, ("no route triggered a reroute - either every cheapest option "
+                      "now scores below the threshold, or recovery has stopped firing")
 
 
 # ------------------------------------------------------------------ 5

@@ -280,20 +280,29 @@ def flight_now(flight_iata: str) -> dict | None:
     }
 
 
-def future_schedule(origin_iata: str, on: str | date, limit: int = 100) -> list[dict]:
+def future_schedule(origin_iata: str, on: str | date, limit: int = 100,
+                    offset: int = 0) -> tuple[list[dict], int]:
     """Real scheduled departures for a future date (flightsFuture).
 
     No delay figures - the day has not happened - but real flight numbers,
     times and aircraft types, which is what a plan booked ahead needs and what
     a generated catalogue can only invent.
+
+    Returns (rows, total). A page is 100 rows and a big airport has well over a
+    thousand, ordered by departure time - so reading only the first pages gets
+    a night's worth of flights rather than a day's. Callers wanting a spread
+    step `offset` across `total` instead of paging from the start.
     """
     when = on.isoformat() if isinstance(on, date) else str(on)
     # No `limit` here: flightsFuture 400s on it, unlike the flights endpoint.
     # The whole day comes back and is trimmed locally instead.
     # Uppercase, unlike the flights endpoint's dep_iata: flightsFuture rejects a
     # lowercase code with a validation error that surfaces as a bare 400.
-    body = _get("flightsFuture", {"iataCode": (origin_iata or "").upper(),
-                                  "type": "departure", "date": when})
+    params = {"iataCode": (origin_iata or "").upper(), "type": "departure", "date": when}
+    if offset:
+        params["offset"] = offset
+    body = _get("flightsFuture", params)
+    total = ((body or {}).get("pagination") or {}).get("total") or 0
     out = []
     for f in (body or {}).get("data", [])[:limit]:
         dep, arr = f.get("departure") or {}, f.get("arrival") or {}
@@ -311,7 +320,7 @@ def future_schedule(origin_iata: str, on: str | date, limit: int = 100) -> list[
             "aircraft_model": _clean((f.get("aircraft") or {}).get("modelText")),
             "weekday": f.get("weekday"),
         })
-    return out
+    return out, total
 
 
 if __name__ == "__main__":
@@ -331,8 +340,8 @@ if __name__ == "__main__":
         print(f"   {d['flight_iata'] or '?':9s} -> {d['destination'] or '?':4s} "
               f"sched {str(d['scheduled_departure'])[11:16]}  delay={d['departure_delay_min']}")
 
-    fut = future_schedule("DEL", date.today() + timedelta(days=7), limit=20)
-    print(f"\n{len(fut)} DEL departures scheduled 7 days out")
+    fut, total = future_schedule("DEL", date.today() + timedelta(days=7), limit=20)
+    print(f"\n{len(fut)} of {total} DEL departures scheduled 7 days out")
     for f in fut[:6]:
         print(f"   {f['flight_iata'] or '?':9s} -> {f['destination'] or '?':4s} "
               f"{str(f['scheduled_departure'])[11:16]}  {f['aircraft_model']}")
