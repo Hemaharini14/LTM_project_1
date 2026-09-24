@@ -29,6 +29,14 @@ def _load_flights():
     global _FLIGHTS_DF
     if _FLIGHTS_DF is None:
         _FLIGHTS_DF = pd.read_csv(UNIFIED_FLIGHT_WEATHER_CLEAN_PATH, low_memory=False)
+        # Precomputed once. lookup_flight_by_number used to call .astype(str) on
+        # this column per request, which is ~70 seconds across 5.4M rows - the
+        # single slowest thing in the app. Doing it here costs that once, during
+        # the background preload nobody is waiting on.
+        _FLIGHTS_DF["_flight_no_str"] = (
+            _FLIGHTS_DF["flight_number"]
+            .astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+        )
     return _FLIGHTS_DF
 
 
@@ -101,9 +109,12 @@ def lookup_flight_by_number(carrier_code: str, flight_number: str) -> dict | Non
     live schedule. Returns None if this carrier+flight number was never seen.
     """
     df = _load_flights()
+    wanted = str(flight_number).strip()
+    if wanted.endswith(".0"):
+        wanted = wanted[:-2]
     subset = df[
         (df["carrier_code"] == (carrier_code or "").upper()) &
-        (df["flight_number"].astype(str) == str(flight_number).strip())
+        (df["_flight_no_str"] == wanted)
     ]
     if subset.empty:
         return None

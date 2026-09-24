@@ -30,6 +30,7 @@ import db
 from predict_delay_v2 import predict_delay_probability, risk_label
 from delay_duration import estimate_delay_duration
 from explain_delay import explain as explain_delay
+from opensky import live_rotation
 from recovery_graph import build_graph
 from recovery_tools import get_dataset_index, is_route_covered, lookup_flight_by_number
 from trip_planner import plan_budget_trip
@@ -333,6 +334,10 @@ def flight_delay():
             scheduled_elapsed_time = _float_field(request.form, "scheduled_elapsed_time", 120)
             departure_time_str = request.form.get("departure_time", "").strip()
             scheduled_hour = int(departure_time_str.split(":")[0]) if departure_time_str else 12
+            # Minutes matter: reconciling a 19:15 departure that left at 19:23
+            # against hour-granularity would read 23 min late instead of 8.
+            scheduled_minute = (int(departure_time_str.split(":")[1])
+                                if departure_time_str and ":" in departure_time_str else 0)
 
             flight_lookup = None
             if flight_number:
@@ -424,7 +429,8 @@ def flight_delay():
                                             if rotation and rotation.get("observed") else None),
                 )
                 label = risk_label(prob)
-                result = {"probability": prob, "label": label, "inputs": inputs, "lookup_note": lookup_note}
+                result = {"probability": prob, "label": label, "inputs": inputs,
+                          "lookup_note": lookup_note, "rotation": rotation}
                 # "How likely" comes from the trained model; "how long and why" is a
                 # real historical statistic for flights like this one that actually
                 # were delayed (delay_duration.py) - the classifier can't say either.
