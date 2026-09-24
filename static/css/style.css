@@ -815,3 +815,8 @@ fieldset legend { color: var(--teal); }
 .option-card:hover { box-shadow: 0 0 40px -12px rgba(34,211,238,0.45); }
 
 .hotel-map { filter: invert(0.92) hue-rotate(180deg) saturate(0.7) contrast(0.95); border-radius: 10px; }
+
+/* --------------------------------- per-flight risk attribution */
+.why-card .cause-list li { grid-template-columns: minmax(150px,auto) 1fr 44px; }
+.why-val { font-style: normal; color: var(--teal); font-family: var(--mono, monospace); font-size: .8em; }
+.why-pts { font-family: monospace; font-size: .78rem; color: #fcd34d; text-align: right; }

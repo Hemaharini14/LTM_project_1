@@ -116,6 +116,30 @@
       <span class="risk-label">{{ result.label }} risk</span>
     </div>
 
+    {% if result.why and result.why.drivers %}
+    <div class="duration-card why-card">
+      <h4>Why this flight is at risk</h4>
+      <p class="duration-headline">{{ result.why.summary }}</p>
+      <ul class="cause-list">
+        {% for d in result.why.drivers %}
+        <li><span>{{ d.factor }} <em class="why-val">{{ d.value }}</em></span>
+          <span class="cause-bar"><span class="cause-fill"
+                style="width: {{ ((d.impact / result.why.drivers[0].impact) * 100) | round(1) }}%"></span></span>
+          <span class="why-pts">+{{ (d.impact * 100) | round(0) | int }}</span></li>
+        {% endfor %}
+      </ul>
+      {% if result.why.protective %}
+      <p class="muted">Working in your favour:
+        {% for d in result.why.protective %}{{ d.factor|lower }} ({{ d.value }}){{ ", " if not loop.last }}{% endfor %}.</p>
+      {% endif %}
+      <p class="dataset-note">
+        Points are how much each condition you entered adds to this flight's risk, measured by
+        re-scoring it with that condition set to a calm baseline. Change the weather above and
+        these change with it.
+      </p>
+    </div>
+    {% endif %}
+
     {% if result.duration %}
     <div class="duration-card">
       <h4>If it is delayed, how long?</h4>

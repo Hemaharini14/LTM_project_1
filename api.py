@@ -29,6 +29,7 @@ sys.path.append(os.path.join(PROJECT_ROOT, "src"))
 import db
 from predict_delay_v2 import predict_delay_probability, risk_label
 from delay_duration import estimate_delay_duration
+from explain_delay import explain as explain_delay
 from recovery_graph import build_graph
 from recovery_tools import get_dataset_index, is_route_covered, lookup_flight_by_number
 from trip_planner import plan_budget_trip
@@ -412,6 +413,24 @@ def flight_delay():
                     result["duration"] = estimate_delay_duration(
                         inputs["carrier_code"], inputs["origin_airport"],
                         inputs["destination_airport"], inputs["scheduled_hour"])
+                # Why THIS flight scores what it does, attributed against the
+                # conditions actually entered - see explain_delay.py. Distinct
+                # from `duration`, which is the route's history and does not
+                # respond to the weather on this form.
+                result["why"] = explain_delay(
+                    carrier_code=inputs["carrier_code"],
+                    origin_airport=inputs["origin_airport"],
+                    destination_airport=inputs["destination_airport"],
+                    weekday=inputs["weekday"], month=inputs["month"],
+                    scheduled_elapsed_time=inputs["scheduled_elapsed_time"],
+                    origin_temp_f=inputs["origin_temp_f"],
+                    origin_temp_known=inputs["origin_temp_known"],
+                    origin_precip_in=inputs["origin_precip_in"],
+                    origin_pressure=inputs["origin_pressure"],
+                    origin_visibility=inputs["origin_visibility"],
+                    origin_wind_speed=inputs["origin_wind_speed"],
+                    scheduled_hour=inputs["scheduled_hour"],
+                    is_holiday=inputs["is_holiday"])
                 db.save_flight_check(session["user_id"], inputs, prob, label)
                 session["last_flight_check"] = inputs
                 session["last_flight_risk"] = {"probability": prob, "label": label}
