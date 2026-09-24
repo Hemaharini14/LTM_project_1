@@ -32,3 +32,8 @@ Thumbs.db
 # Rebuild with: cd web && npm install && npm run build
 web/node_modules/
 static/showcase/
+
+# Cached AviationStack responses and the monthly call tally - machine-local
+# state, and the cache can hold a lot of flight rows.
+data/cache/
+data/aviationstack_usage.json
