@@ -71,6 +71,7 @@ def plan_budget_trip(
     food_comfort: str = "standard",
     sightseeing_level: str = "moderate",
     transport_mode: str = "",
+    travelers: int = 1,
 ) -> dict:
     days = max(int(days), 1)
     nights = max(days - 1, 1)
@@ -118,6 +119,7 @@ def plan_budget_trip(
         priority=optimize_priority,
         food_multiplier=LEVEL_MULTIPLIER.get(food_comfort, 1.0),
         transport_multiplier=LEVEL_MULTIPLIER.get(travel_comfort, 1.0),
+        travelers=travelers,
     )
 
     route_covered = is_route_covered(origin_airport, destination_airport)
@@ -331,6 +333,12 @@ def plan_budget_trip(
         "sightseeing_hidden": _hidden,
         "daily_food_budget_usd": food_per_day,
         "daily_transport_budget_usd": transport_per_day,
+        "travelers": travelers,
+        "rooms": result.get("rooms", 1),
+        # The party budget divided by heads, which is the figure people
+        # actually check against what they are each willing to spend.
+        "daily_food_per_person_usd": round(food_per_day / max(travelers, 1), 2),
+        "budget_per_person_usd": round(total_budget / max(travelers, 1), 2),
         "day_plan": day_plan,
         # Genuine optimization metadata (itinerary_optimizer.py) - how many real
         # flight x hotel combinations were actually checked against the real

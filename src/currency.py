@@ -22,6 +22,11 @@ SUPPORTED_CURRENCIES = {
 }
 
 _CACHE_TTL_SECONDS = 3600
+# What prices are SHOWN in by default. Amounts are held in USD internally -
+# the flight dataset and the hotel ADR tiers are dollar-denominated - so this
+# changes presentation, never the arithmetic or the budget optimiser.
+DEFAULT_CURRENCY = "INR"
+
 _rates_cache = {"rates": {"USD": 1.0}, "fetched_at": 0.0}
 
 
@@ -51,10 +56,27 @@ def convert(usd_amount: float, currency: str) -> float:
     return round(usd_amount * rate, 2)
 
 
+def to_usd(amount: float, currency: str) -> float:
+    """Convert an amount the user TYPED in `currency` back to USD.
+
+    Everything downstream - the budget optimiser, the hotel ADR tiers, the
+    training data - is dollar-denominated, so a figure entered in a field
+    labelled with the display currency has to come back across before it is
+    used as a constraint. Without this, typing 2000 in a box marked INR was
+    read as $2,000 and planned a trip worth about 1.9 lakh.
+    """
+    if not currency or currency == "USD":
+        return float(amount)
+    rate = get_rates().get(currency)
+    if not rate:
+        return float(amount)
+    return round(float(amount) / rate, 2)
+
+
 def format_money(usd_amount: float, currency: str) -> str:
     if usd_amount is None:
         return ""
-    currency = currency if currency in SUPPORTED_CURRENCIES else "USD"
+    currency = currency if currency in SUPPORTED_CURRENCIES else DEFAULT_CURRENCY
     symbol = SUPPORTED_CURRENCIES[currency]["symbol"]
     converted = convert(usd_amount, currency)
     return f"{symbol}{converted:,.2f}"

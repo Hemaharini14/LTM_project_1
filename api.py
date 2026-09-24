@@ -33,6 +33,7 @@ from explain_delay import explain as explain_delay
 from opensky import (bbox_for_route, callsign_for, live_rotation, live_traffic,
                      rotation_from_icao24)
 from aviationstack import flight_now
+from weather_live import airport_weather
 from recovery_graph import build_graph
 from recovery_tools import get_dataset_index, is_route_covered, lookup_flight_by_number
 from trip_planner import plan_budget_trip
@@ -68,7 +69,10 @@ def _render_markdown(text: str) -> str:
 
 
 app.jinja_env.filters["render_markdown"] = _render_markdown
-app.jinja_env.filters["money"] = lambda usd: currency_utils.format_money(usd, session.get("currency", "USD"))
+# Costs are computed in USD internally (the training data and hotel ADR tiers
+# are dollar-denominated); DEFAULT_CURRENCY is only what they are DISPLAYED in.
+app.jinja_env.filters["money"] = lambda usd: currency_utils.format_money(
+    usd, session.get("currency", currency_utils.DEFAULT_CURRENCY))
 
 db.init_db()
 _recovery_app = build_graph()
@@ -137,7 +141,7 @@ def inject_user():
     return {
         "current_user_name": session.get("user_name") if user_id else None,
         "is_admin": session.get("is_admin", False),
-        "current_currency": session.get("currency", "USD"),
+        "current_currency": session.get("currency", currency_utils.DEFAULT_CURRENCY),
         "supported_currencies": currency_utils.SUPPORTED_CURRENCIES,
     }
 
@@ -200,7 +204,7 @@ def signup():
             session["user_id"] = user_id
             session["user_name"] = name
             session["is_admin"] = is_admin
-            session["currency"] = "USD"
+            session["currency"] = currency_utils.DEFAULT_CURRENCY
             return redirect(url_for("home"))
     return render_template("signup.html")
 
@@ -215,7 +219,7 @@ def login():
             session["user_id"] = user["id"]
             session["user_name"] = user["name"]
             session["is_admin"] = bool(user["is_admin"])
-            session["currency"] = user["preferred_currency"] or "USD"
+            session["currency"] = user["preferred_currency"] or currency_utils.DEFAULT_CURRENCY
             return redirect(request.args.get("next") or url_for("home"))
         flash("Invalid email or password.", "error")
     return render_template("login.html")
@@ -230,9 +234,9 @@ def logout():
 @app.route("/set-currency", methods=["POST"])
 @login_required
 def set_currency():
-    currency = request.form.get("currency", "USD").upper()
+    currency = request.form.get("currency", currency_utils.DEFAULT_CURRENCY).upper()
     if currency not in currency_utils.SUPPORTED_CURRENCIES:
-        currency = "USD"
+        currency = currency_utils.DEFAULT_CURRENCY
     session["currency"] = currency
     db.update_user_currency(session["user_id"], currency)
     return redirect(request.form.get("next") or url_for("home"))
@@ -298,8 +302,31 @@ def history_flight_detail(check_id):
     inputs = json.loads(row["inputs_json"])
     recommendation = json.loads(row["recommendation_json"]) if row["recommendation_json"] else None
     result = {"probability": row["delay_probability"], "label": row["risk_label"], "inputs": inputs}
-    return render_template("flight_delay.html", result=result, recommendation=recommendation,
+    # The plan itself renders on its own page now, so a saved check links to it
+    # rather than carrying the markup - otherwise a stored plan silently vanished
+    # when that block moved out of flight_delay.html.
+    return render_template("flight_delay.html", result=result, recommendation=None,
+                            saved_plan_id=check_id if recommendation else None,
                             from_history=True, **_dropdown_options())
+
+
+@app.route("/history/flight/<int:check_id>/alternatives")
+@login_required
+def history_flight_alternatives(check_id):
+    """A plan that was saved with an earlier check, read-only."""
+    row = db.get_flight_check_by_id(check_id)
+    if not row or (row["user_id"] != session["user_id"] and not session.get("is_admin")):
+        flash("That flight check couldn't be found.", "error")
+        return redirect(url_for("history"))
+    recommendation = json.loads(row["recommendation_json"]) if row["recommendation_json"] else None
+    if not recommendation:
+        flash("No alternative plan was saved with that check.", "error")
+        return redirect(url_for("history_flight_detail", check_id=check_id))
+    inputs = json.loads(row["inputs_json"])
+    return render_template("alternatives.html", recommendation=recommendation,
+                            flight=inputs,
+                            risk={"probability": row["delay_probability"],
+                                  "label": row["risk_label"]})
 
 
 @app.route("/history/trip/<int:trip_id>")
@@ -375,11 +402,47 @@ def flight_delay():
                 # mismatching it between two paths using the identical guessed number produces
                 # very different (wrong) predictions for the same real input.
                 "origin_temp_known": bool((request.form.get("origin_temp_f") or "").strip()),
+                "weather_source": "entered" if (request.form.get("origin_temp_f") or "").strip() else None,
                 "origin_precip_in": _float_field(request.form, "origin_precip_in", DEFAULT_WEATHER["precip_in"]),
                 "origin_pressure": _float_field(request.form, "origin_pressure", DEFAULT_WEATHER["pressure"]),
                 "origin_visibility": _float_field(request.form, "origin_visibility", DEFAULT_WEATHER["visibility"]),
                 "origin_wind_speed": _float_field(request.form, "origin_wind_speed", DEFAULT_WEATHER["wind_speed"]),
             }
+
+            # Nobody fills in five weather fields, so they defaulted to
+            # placeholders on almost every check. A real forecast is free,
+            # keyless and available 16 days out, so blank fields are filled
+            # from it instead.
+            #
+            # ORIGIN ONLY, and that is measured rather than assumed. Against
+            # 139 real outcomes, origin weather moved AUC 0.713 -> 0.722 while
+            # DESTINATION weather moved it 0.713 -> 0.603. Supplying dest_*
+            # flips dest_weather_known from 0 to 1 and puts real values where
+            # the encoder was substituting its own training mean - which scales
+            # to exactly zero, i.e. "no signal". Silence beats a reading the
+            # model reads through US-learned weights, so destination weather is
+            # deliberately not passed to the model. See scripts in git history.
+            if not inputs["origin_temp_known"]:
+                try:
+                    forecast = airport_weather(
+                        inputs["origin_airport"],
+                        datetime.strptime(f"{travel_date} {scheduled_hour:02d}:00",
+                                          "%Y-%m-%d %H:%M"))
+                    if forecast:
+                        for form_field, key in [
+                            ("origin_temp_f", "temp_f"), ("origin_precip_in", "precip_in"),
+                            ("origin_pressure", "pressure"), ("origin_visibility", "visibility"),
+                            ("origin_wind_speed", "wind_speed"),
+                        ]:
+                            if not (request.form.get(form_field) or "").strip():
+                                inputs[form_field] = forecast[key]
+                        inputs["weather_source"] = "forecast"
+                        # origin_temp_known stays False on purpose. In training it
+                        # was 100% correlated with US-vs-India, so it encodes which
+                        # dataset a row came from more than whether anyone read a
+                        # thermometer - and setting it True here cost 0.611 -> 0.570.
+                except Exception as e:
+                    print(f"[api] forecast lookup skipped: {e}")
 
             # Live aircraft rotation: find the real aircraft due to fly this, see
             # where it has been today, and how much ground time is left before the
@@ -488,53 +551,67 @@ def flight_delay():
                 session["last_flight_check"] = inputs
                 session["last_flight_risk"] = {"probability": prob, "label": label}
 
-        elif stage == "recover":
-            inputs = session.get("last_flight_check")
-            risk = session.get("last_flight_risk")
-            if not inputs or not risk:
-                flash("Please check your flight again before requesting alternatives.", "error")
-                return redirect(url_for("flight_delay"))
-
-            budget = {
-                "flight_cost": _float_field(request.form, "flight_cost", 150),
-                "hotel_cost": _float_field(request.form, "hotel_cost", 400),
-                "food_cost": _float_field(request.form, "food_cost", 250),
-                "transport_cost": _float_field(request.form, "transport_cost", 150),
-                "sightseeing_cost": _float_field(request.form, "sightseeing_cost", 150),
-            }
-            priority = request.form.get("priority", "cost")
-
-            # Categories the traveller has already paid for - these must not be
-            # trimmed to fund the disruption (see budget_optimizer.reallocate_budget).
-            committed = [c for c in request.form.getlist("committed")
-                         if c.endswith("_cost")]
-
-            # Sightseeing already decided on, so the agent knows what's actually
-            # committed rather than treating the whole line as discretionary.
-            planned_spots = []
-            for i in (1, 2, 3):
-                name = request.form.get(f"spot_name_{i}", "").strip()
-                if name:
-                    planned_spots.append({
-                        "name": name,
-                        "cost_usd": _float_field(request.form, f"spot_cost_{i}", 0),
-                    })
-
-            state = {**inputs, "priority": priority, "budget": budget,
-                     "committed": committed, "planned_spots": planned_spots,
-                     "stay_name": request.form.get("stay_name", "").strip()}
-            state.pop("travel_date", None)
-            outcome = _recovery_app.invoke(state)
-            outcome["assumed_hotel_nights"] = ASSUMED_RECOVERY_HOTEL_NIGHTS
-            recommendation = outcome
-            result = {"probability": risk["probability"], "label": risk["label"], "inputs": inputs,
-                      "duration": estimate_delay_duration(
-                          inputs["carrier_code"], inputs["origin_airport"],
-                          inputs["destination_airport"], inputs.get("scheduled_hour", 12))}
-            db.save_flight_check(session["user_id"], inputs, risk["probability"], risk["label"], outcome)
-
     return render_template("flight_delay.html", result=result, recommendation=recommendation,
                             **_dropdown_options())
+
+
+@app.route("/flight-delay/alternatives", methods=["GET", "POST"])
+@login_required
+def flight_alternatives():
+    """The recovery plan, on its own page.
+
+    This used to render underneath the delay result on /flight-delay, so the
+    form and then the plan stacked below a number you had already read. It
+    reads the same session state the old "recover" stage did.
+    """
+    inputs = session.get("last_flight_check")
+    risk = session.get("last_flight_risk")
+    if not inputs or not risk:
+        flash("Check a flight first, then we can plan around its delay.", "error")
+        return redirect(url_for("flight_delay"))
+
+    recommendation = None
+    if request.method == "POST":
+        display_currency = session.get("currency", currency_utils.DEFAULT_CURRENCY)
+
+        def _money_field(name, default):
+            # The labels carry the display currency, so what was typed has to
+            # come back to USD before the optimiser sees it as a constraint.
+            return currency_utils.to_usd(_float_field(request.form, name, default),
+                                          display_currency)
+
+        budget = {
+            "flight_cost": _money_field("flight_cost", 150),
+            "hotel_cost": _money_field("hotel_cost", 400),
+            "food_cost": _money_field("food_cost", 250),
+            "transport_cost": _money_field("transport_cost", 150),
+            "sightseeing_cost": _money_field("sightseeing_cost", 150),
+        }
+        priority = request.form.get("priority", "cost")
+
+        # Categories the traveller has already paid for - these must not be
+        # trimmed to fund the disruption (see budget_optimizer.reallocate_budget).
+        committed = [c for c in request.form.getlist("committed") if c.endswith("_cost")]
+
+        planned_spots = []
+        for i in (1, 2, 3):
+            name = request.form.get(f"spot_name_{i}", "").strip()
+            if name:
+                planned_spots.append({"name": name,
+                                      "cost_usd": _money_field(f"spot_cost_{i}", 0)})
+
+        state = {**inputs, "priority": priority, "budget": budget,
+                 "committed": committed, "planned_spots": planned_spots,
+                 "stay_name": request.form.get("stay_name", "").strip()}
+        state.pop("travel_date", None)
+        outcome = _recovery_app.invoke(state)
+        outcome["assumed_hotel_nights"] = ASSUMED_RECOVERY_HOTEL_NIGHTS
+        recommendation = outcome
+        db.save_flight_check(session["user_id"], inputs, risk["probability"],
+                             risk["label"], outcome)
+
+    return render_template("alternatives.html", recommendation=recommendation,
+                            flight=inputs, risk=risk)
 
 
 # ---------------------------------------------------------------- budget trip planner
@@ -573,7 +650,12 @@ def budget_trip():
             "destination_airport": request.form.get("destination_airport", "").strip().upper(),
             "destination_city": (request.form.get("destination_city", "").strip()
                                  or request.form.get("destination_place", "").strip()),
-            "total_budget": _float_field(request.form, "total_budget", 1000),
+            # The field is labelled in the display currency, so what was typed
+            # has to come back to USD before it constrains anything - the
+            # optimiser and the hotel tiers are dollar-denominated.
+            "total_budget": currency_utils.to_usd(
+                _float_field(request.form, "total_budget", 1000),
+                session.get("currency", currency_utils.DEFAULT_CURRENCY)),
             "days": days,
             "start_date": start_date_str,
             "return_date": return_date.strftime("%Y-%m-%d"),
@@ -581,6 +663,9 @@ def budget_trip():
             "travel_comfort": request.form.get("travel_comfort", "standard"),
             "food_comfort": request.form.get("food_comfort", "standard"),
             "sightseeing_level": request.form.get("sightseeing_level", "moderate"),
+            # Capped: the hotel tiers are per-room medians, and beyond a dozen
+            # people a trip is a group booking this planner cannot price.
+            "travelers": max(1, min(_int_field(request.form, "travelers", 1), 12)),
         }
 
         if not inputs["origin_airport"] and inputs["origin_place"]:
@@ -602,6 +687,7 @@ def budget_trip():
             food_comfort=inputs["food_comfort"],
             sightseeing_level=inputs["sightseeing_level"],
             transport_mode=inputs["transport_mode"],
+            travelers=inputs["travelers"],
         )
         plan["transport_mode"] = inputs["transport_mode"]
         # Real numbers for the mode actually chosen, so a traveller who picked the

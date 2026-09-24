@@ -25,6 +25,7 @@ honestly (same spirit as budget_optimizer.reallocate_budget) instead of
 pretending something fits.
 """
 import itertools
+import math
 
 from recovery_tools import search_alternative_flights, get_all_hotel_tiers
 from intl_reference import get_reference_flights
@@ -70,9 +71,15 @@ def optimize_itinerary(origin_airport: str, destination_airport: str,
                         total_budget: float, days: int,
                         start_weekday: int, return_weekday: int,
                         priority: str = "cost",
-                        food_multiplier: float = 1.0, transport_multiplier: float = 1.0) -> dict:
+                        food_multiplier: float = 1.0, transport_multiplier: float = 1.0,
+                        travelers: int = 1) -> dict:
     days = max(int(days), 1)
     nights = max(days - 1, 1)
+    travelers = max(int(travelers or 1), 1)
+    # The only line that does not scale with headcount the way the budget shares
+    # already do: food, transport and sightseeing are fractions of one party
+    # budget, but beds are bought two to a room.
+    rooms = math.ceil(travelers / 2)
 
     outbound_candidates, has_real_outbound = _leg_candidates(
         origin_airport, destination_airport, start_weekday, priority)
@@ -95,7 +102,7 @@ def optimize_itinerary(origin_airport: str, destination_airport: str,
 
     combos = []
     for ob, rb, hotel in itertools.product(ob_pool, rb_pool, hotel_tiers):
-        hotel_total = round(hotel["median_nightly_rate_usd"] * nights, 2)
+        hotel_total = round(hotel["median_nightly_rate_usd"] * nights * rooms, 2)
         leftover = round(remaining - hotel_total, 2)
         if leftover < 0:
             continue
@@ -107,7 +114,7 @@ def optimize_itinerary(origin_airport: str, destination_airport: str,
 
     if not combos:
         cheapest_hotel = min(hotel_tiers, key=lambda h: h["median_nightly_rate_usd"]) if hotel_tiers else None
-        shortfall = (round(cheapest_hotel["median_nightly_rate_usd"] * nights - remaining, 2)
+        shortfall = (round(cheapest_hotel["median_nightly_rate_usd"] * nights * rooms - remaining, 2)
                      if cheapest_hotel else None)
         return {
             "feasible": False,
@@ -171,4 +178,6 @@ def optimize_itinerary(origin_airport: str, destination_airport: str,
             "total": round(flight_cost + best["hotel_total_usd"] + food_cost
                             + transport_cost + best["sightseeing_cost"], 2),
         },
+        "travelers": travelers,
+        "rooms": rooms,
     }

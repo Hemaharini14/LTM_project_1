@@ -46,8 +46,13 @@
         <label>Trip length (days)
           <input type="number" name="days" min="1" max="30" value="{{ form_data.days or 5 }}" required>
         </label>
-        <label>Total budget (USD $)
-          <input type="number" name="total_budget" min="50" value="{{ form_data.total_budget or 1500 }}" required>
+        <label>Number of travellers
+          <input type="number" name="travelers" min="1" max="12"
+                 value="{{ form_data.travelers or 1 }}" required>
+        </label>
+        <label>Total budget for the whole party ({{ current_currency }})
+          <input type="number" name="total_budget" min="50" required
+                 value="{{ form_data.total_budget or (150000 if current_currency == 'INR' else 1500) }}">
         </label>
       </div>
 
@@ -160,7 +165,17 @@
         <span class="budget-amount">{{ plan.budget_breakdown[cat] | money }}</span>
       </div>
       {% endfor %}
-      <div class="budget-total">Total: {{ plan.budget_breakdown.total | money }} · {{ plan.nights }} night(s)</div>
+      <div class="budget-total">Total: {{ plan.budget_breakdown.total | money }} · {{ plan.nights }} night(s)
+        {%- if plan.travelers and plan.travelers > 1 %} · {{ plan.travelers }} travellers
+        in {{ plan.rooms }} room{{ 's' if plan.rooms != 1 else '' }}{% endif %}</div>
+      {% if plan.travelers and plan.travelers > 1 %}
+      <p class="dataset-note">
+        That is <strong>{{ plan.budget_per_person_usd | money }} per person</strong>.
+        Food, transport and sightseeing are shares of the whole party's budget;
+        the hotel line is {{ plan.rooms }} room{{ 's' if plan.rooms != 1 else '' }}
+        at two per room, which is the only cost that does not split evenly by head.
+      </p>
+      {% endif %}
     </div>
     {% if plan.optimizer_feasible %}
     <p class="dataset-note">Optimized: checked {{ plan.combinations_considered }} real flight × hotel

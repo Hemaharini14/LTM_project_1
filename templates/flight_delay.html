@@ -121,6 +121,15 @@
       <span class="risk-label">{{ result.label }} risk</span>
     </div>
 
+    {% if result.inputs.weather_source == "forecast" %}
+    <p class="dataset-note">
+      Weather you left blank was filled from the real forecast for
+      {{ result.inputs.origin_airport }} at {{ "%02d"|format(result.inputs.scheduled_hour) }}:00 —
+      {{ result.inputs.origin_temp_f }}°F, {{ result.inputs.origin_wind_speed }} mph wind,
+      {{ result.inputs.origin_visibility }} mi visibility. Enter your own readings to override.
+    </p>
+    {% endif %}
+
     {% if result.airline_estimate and result.airline_estimate.delay_min is not none %}
     <div class="duration-card">
       <h4>What the airline says right now</h4>
@@ -266,7 +275,10 @@
         Would you like us to recommend an alternative that fits your budget?
       </p>
 
-      {% if not recommendation and from_history %}
+      {% if saved_plan_id %}
+      <a href="{{ url_for('history_flight_alternatives', check_id=saved_plan_id) }}"
+         class="btn btn-secondary btn-block">View the alternative plan saved with this check →</a>
+      {% elif not recommendation and from_history %}
       {# The recover stage reads session["last_flight_check"], which is whatever was
          checked most recently - NOT this saved check. Offering it here would return
          alternatives for the wrong flight, so send them back to re-run it instead. #}
@@ -275,140 +287,17 @@
         <a href="{{ url_for('flight_delay') }}">run the check again</a>.
       </p>
       {% elif not recommendation %}
-      <form method="post" action="{{ url_for('flight_delay') }}" class="form-stack budget-subform">
-        <input type="hidden" name="stage" value="recover">
-
-        <p class="muted">Tell us what's already arranged. Anything marked booked won't be
-          trimmed to pay for the disruption — that money is already spent, so "freeing" it
-          wouldn't actually fund anything.</p>
-
-        <div class="form-grid">
-          <label>Flight budget (USD $) <input type="number" name="flight_cost" value="150" min="0"></label>
-          <label>Hotel budget (USD $) <input type="number" name="hotel_cost" value="400" min="0"></label>
-          <label>Food budget (USD $) <input type="number" name="food_cost" value="250" min="0"></label>
-          <label>Transport budget (USD $) <input type="number" name="transport_cost" value="150" min="0"></label>
-          <label>Sightseeing budget (USD $) <input type="number" name="sightseeing_cost" value="150" min="0"></label>
-          <label>What matters most?
-            <select name="priority">
-              <option value="cost">Lowest cost</option>
-              <option value="time">Least delay risk</option>
-              <option value="comfort">Comfort</option>
-            </select>
-          </label>
-        </div>
-
-        <fieldset>
-          <legend>Already booked and paid</legend>
-          <div class="form-grid booked-grid">
-            {% for cat, label in [('hotel_cost','Hotel'), ('flight_cost','Flight'),
-                                   ('transport_cost','Transport'), ('sightseeing_cost','Sightseeing'),
-                                   ('food_cost','Food')] %}
-            <label class="checkbox-row">
-              <input type="checkbox" name="committed" value="{{ cat }}"> {{ label }}
-            </label>
-            {% endfor %}
-          </div>
-        </fieldset>
-
-        <fieldset>
-          <legend>Where you're staying</legend>
-          <label>Hotel / accommodation <span class="muted">(optional)</span>
-            <input type="text" name="stay_name" placeholder="e.g. Hotel Ballal Residency, Bengaluru">
-          </label>
-        </fieldset>
-
-        <fieldset>
-          <legend>Sightseeing you've already decided on <span class="muted">(optional)</span></legend>
-          <div class="form-grid">
-            {% for i in range(1, 4) %}
-            <label>Spot {{ i }}
-              <input type="text" name="spot_name_{{ i }}" placeholder="Place you plan to visit">
-            </label>
-            <label>Its cost (USD $)
-              <input type="number" name="spot_cost_{{ i }}" min="0" placeholder="0">
-            </label>
-            {% endfor %}
-          </div>
-        </fieldset>
-
-        <button type="submit" class="btn btn-secondary btn-block">Yes, recommend an alternative</button>
-      </form>
+      {# The form and the resulting plan both live on their own page now - stacking
+         them under the result made a page you had to scroll past to read anything. #}
+      <a href="{{ url_for('flight_alternatives') }}" class="btn btn-secondary btn-block">
+        Plan around this delay →
+      </a>
       {% endif %}
     {% endif %}
   </div>
   {% endif %}
 </div>
 
-{% if recommendation %}
-<section class="panel recommendation-panel">
-  <h2>Your alternative plan</h2>
-  <div class="recommendation-text">{{ recommendation.recommendation_text | render_markdown | safe }}</div>
-
-  {% if recommendation.alternative_flights %}
-  <h3>Alternative flights</h3>
-  <div class="card-row">
-    {% for f in recommendation.alternative_flights %}
-    <div class="mini-card">
-      <strong>{{ carrier_name(f.carrier) }} {{ f.flight_number }}</strong> · {{ f.route }}
-      {% if f.departure_time %}<span class="muted">Departs {{ f.departure_time }} → Arrives {{ f.arrival_time }}</span>{% endif %}
-      <span class="badge risk-{{ f.risk_label|lower }}">{{ f.risk_label }} ({{ (f.delay_probability * 100) | round(1) }}%)</span>
-      <span class="muted">{{ f.scheduled_elapsed_time }} min flight</span>
-    </div>
-    {% endfor %}
-  </div>
-  <p class="dataset-note">No fare data available — schedule and delay-risk only.</p>
-  {% endif %}
-
-  {% if recommendation.hotel_options %}
-  <h3>Hotel options nearby <span class="muted">(assuming a {{ recommendation.assumed_hotel_nights }}-night stay)</span></h3>
-  <div class="card-row">
-    {% for h in recommendation.hotel_options %}
-    <div class="mini-card">
-      <strong>{{ h.hotel_type }}</strong> · Room {{ h.room_type }}
-      <span>{{ h.median_nightly_rate_usd | money }}/night · {{ (h.median_nightly_rate_usd * recommendation.assumed_hotel_nights) | money }} total</span>
-      <span class="reliability-bar"><span class="reliability-fill" style="width: {{ h.reliability_pct }}%"></span></span>
-      <span class="muted">{{ h.reliability_pct }}% of past bookings kept (not cancelled)</span>
-    </div>
-    {% endfor %}
-  </div>
-  <p class="dataset-note">Price tiers only — no property names in this dataset.</p>
-  {% endif %}
-
-  {% if recommendation.destination_weather %}
-  <h3>Destination weather</h3>
-  <div class="mini-card">
-    {{ recommendation.destination_weather.condition }} · {{ recommendation.destination_weather.temperature_celsius }}°C ·
-    updated {{ recommendation.destination_weather.last_updated }}
-  </div>
-  {% endif %}
-
-  {% if recommendation.new_budget %}
-  <h3>Adjusted budget</h3>
-  <div class="budget-bars">
-    {% for cat in ['flight_cost','hotel_cost','food_cost','transport_cost','sightseeing_cost'] %}
-    <div class="budget-row">
-      <span class="budget-cat">{{ cat.replace('_cost','')|capitalize }}</span>
-      <div class="budget-track"><div class="budget-fill" style="width: {{ (recommendation.new_budget[cat] / recommendation.new_budget.total * 100) | round(1) }}%"></div></div>
-      <span class="budget-amount">{{ recommendation.new_budget[cat] | money }}</span>
-    </div>
-    {% endfor %}
-    <div class="budget-total">Total: {{ recommendation.new_budget.total | money }}</div>
-  </div>
-  {% if recommendation.trim_log %}
-  <ul class="trim-log">
-    {% for line in recommendation.trim_log %}<li>{{ line }}</li>{% endfor %}
-  </ul>
-  {% endif %}
-  {% if recommendation.budget_shortfall and recommendation.budget_shortfall > 0 %}
-  <p class="result-message warn">
-    This leaves a {{ recommendation.budget_shortfall | money }} shortfall. Anything you marked
-    as already booked was left alone — that money is spent, so trimming it on paper wouldn't
-    have paid for the change.
-  </p>
-  {% endif %}
-  {% endif %}
-</section>
-{% endif %}
 {% endblock %}
 
 {% block scripts %}

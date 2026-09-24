@@ -80,7 +80,18 @@ def init_db():
             """
         )
         _ensure_column(conn, "users", "is_admin", "INTEGER NOT NULL DEFAULT 0")
-        _ensure_column(conn, "users", "preferred_currency", "TEXT NOT NULL DEFAULT 'USD'")
+        _ensure_column(conn, "users", "preferred_currency", "TEXT NOT NULL DEFAULT 'INR'")
+        # A column default only applies to new rows, so accounts created before
+        # the switch stayed on dollars and the app looked unchanged to anyone
+        # already signed up. This moves those across ONCE - it fires only while
+        # no account has deliberately chosen a currency other than USD, so a
+        # real preference set in settings is never overwritten.
+        chosen = conn.execute(
+            "SELECT COUNT(*) FROM users WHERE preferred_currency NOT IN ('USD', 'INR')"
+        ).fetchone()[0]
+        if not chosen:
+            conn.execute("UPDATE users SET preferred_currency = 'INR' "
+                         "WHERE preferred_currency = 'USD'")
         conn.commit()
 
 
