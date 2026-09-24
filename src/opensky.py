@@ -229,6 +229,65 @@ def callsign_for(carrier_iata: str, flight_number: str) -> str | None:
     return f"{icao}{num}" if icao and num else None
 
 
+# An inbound leg is only the inbound if it landed where this flight departs and
+# did so recently. Beyond this, the aircraft is simply somewhere else earlier in
+# its day and the gap measures nothing.
+MAX_INBOUND_GAP_H = 6
+
+
+def rotation_from_icao24(icao24: str, origin_iata: str,
+                         scheduled_departure_ts: int) -> dict:
+    """Inbound-leg view for an airframe someone else has already identified.
+
+    live_rotation() has to find the aircraft by looking up this flight's own
+    departure, which means the departure must already have happened - that is
+    why it only ever works retrospectively. A schedule source that names the
+    airframe removes that step, and this is the half that remains.
+
+    Two guards, both learned from the data rather than assumed:
+
+      the leg must LAND here   the most recent leg is often one that departed
+                               this airport, meaning the aircraft is still away
+                               and the real inbound has not flown yet.
+      it must land RECENTLY    for a flight tonight, the newest observable leg
+                               is this morning's, giving a 14-hour "turnaround"
+                               that describes nothing.
+    """
+    if not icao24:
+        return {"observed": False, "reason": "no airframe identified for this flight"}
+
+    prior = prior_leg(icao24, scheduled_departure_ts)
+    if not prior:
+        return {"observed": False, "icao24": icao24,
+                "reason": "no earlier leg observed for this aircraft"}
+
+    here = icao_for(origin_iata)
+    landed_at = (prior.get("to") or "").upper() or None
+    if here and landed_at and landed_at != here:
+        return {"observed": False, "icao24": icao24,
+                "reason": f"this aircraft's last observed leg ended at {landed_at}, "
+                          f"not {origin_iata} - its inbound has not flown yet"}
+
+    gap = turnaround_min(prior, scheduled_departure_ts)
+    if gap is None or gap > MAX_INBOUND_GAP_H * 60:
+        return {"observed": False, "icao24": icao24,
+                "reason": ("the aircraft's last observed leg was too long before "
+                           "departure to be the inbound - it has more flying to do first")}
+
+    inferred = round(max(0.0, TYPICAL_TURNAROUND_MIN - gap), 1)
+    return {
+        "observed": True,
+        "icao24": icao24,
+        "prior_leg": f"{prior.get('from') or '?'} -> {prior.get('to') or '?'}",
+        "inbound_landed_ts": prior["actual_arrival_ts"],
+        "ground_time_min": gap,
+        "inferred_inbound_delay_min": inferred,
+        "basis": ("airframe from the airline schedule, inbound landing observed by "
+                  f"receivers; delay inferred against a {TYPICAL_TURNAROUND_MIN:.0f} min "
+                  "typical turnaround"),
+    }
+
+
 def live_rotation(carrier_iata: str, flight_number: str, origin_iata: str,
                    scheduled_departure_ts: int) -> dict:
     """The aircraft that operated this flight, and how its inbound leg went.

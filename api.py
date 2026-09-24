@@ -30,7 +30,9 @@ import db
 from predict_delay_v2 import predict_delay_probability, risk_label
 from delay_duration import estimate_delay_duration
 from explain_delay import explain as explain_delay
-from opensky import bbox_for_route, callsign_for, live_rotation, live_traffic
+from opensky import (bbox_for_route, callsign_for, live_rotation, live_traffic,
+                     rotation_from_icao24)
+from aviationstack import flight_now
 from recovery_graph import build_graph
 from recovery_tools import get_dataset_index, is_route_covered, lookup_flight_by_number
 from trip_planner import plan_budget_trip
@@ -384,13 +386,38 @@ def flight_delay():
             # SCHEDULED push. That fills prev_leg_arrival_delay, which the form
             # cannot supply and which the model weights heavily.
             rotation = None
+            airline_estimate = None
             if flight_number and carrier_code:
                 try:
                     sched_ts = int(datetime.strptime(
                         f"{travel_date} {scheduled_hour:02d}:{scheduled_minute:02d}",
                         "%Y-%m-%d %H:%M").timestamp())
-                    rotation = live_rotation(carrier_code, flight_number,
-                                              inputs["origin_airport"], sched_ts)
+
+                    # The airline's schedule names the airframe, which receivers
+                    # cannot do for a flight that has not departed. That removes
+                    # the step that made the rotation check retrospective, so it
+                    # is tried first and the receiver-only path stays as fallback.
+                    # Only for today. The free plan's flights endpoint takes no
+                    # date, so it always answers with today's instance of this
+                    # number - presenting that against a departure next week
+                    # would show one day's delay as another's.
+                    live = (flight_now(f"{carrier_code}{flight_number}")
+                            if travel_date == date.today().isoformat() else None)
+                    if live:
+                        airline_estimate = {
+                            "delay_min": live.get("departure_delay_min"),
+                            "status": live.get("status"),
+                            "scheduled": live.get("scheduled_departure"),
+                            "estimated": live.get("estimated_departure"),
+                            "terminal": live.get("terminal"),
+                            "gate": live.get("gate"),
+                        }
+                    if live and live.get("icao24"):
+                        rotation = rotation_from_icao24(
+                            live["icao24"], inputs["origin_airport"], sched_ts)
+                    else:
+                        rotation = live_rotation(carrier_code, flight_number,
+                                                  inputs["origin_airport"], sched_ts)
                 except Exception as e:
                     print(f"[api] live rotation lookup skipped: {e}")
 
@@ -430,7 +457,8 @@ def flight_delay():
                 )
                 label = risk_label(prob)
                 result = {"probability": prob, "label": label, "inputs": inputs,
-                          "lookup_note": lookup_note, "rotation": rotation}
+                          "lookup_note": lookup_note, "rotation": rotation,
+                          "airline_estimate": airline_estimate}
                 # "How likely" comes from the trained model; "how long and why" is a
                 # real historical statistic for flights like this one that actually
                 # were delayed (delay_duration.py) - the classifier can't say either.

@@ -121,6 +121,38 @@
       <span class="risk-label">{{ result.label }} risk</span>
     </div>
 
+    {% if result.airline_estimate and result.airline_estimate.delay_min is not none %}
+    <div class="duration-card">
+      <h4>What the airline says right now</h4>
+      <p class="duration-headline">
+        {% if result.airline_estimate.delay_min > 0 %}
+        Currently estimated to depart
+        <strong>{{ result.airline_estimate.delay_min }} min late</strong>
+        {% else %}
+        Currently estimated to depart <strong>on time</strong>
+        {% endif %}
+        {% if result.airline_estimate.status %}
+        · status <strong>{{ result.airline_estimate.status }}</strong>{% endif %}
+      </p>
+      {% if result.airline_estimate.terminal or result.airline_estimate.gate %}
+      <div class="divide">
+        {% if result.airline_estimate.terminal %}
+        <div class="flex-row"><span class="muted">Terminal</span>
+          <strong>{{ result.airline_estimate.terminal }}</strong></div>{% endif %}
+        {% if result.airline_estimate.gate %}
+        <div class="flex-row"><span class="muted">Gate</span>
+          <strong>{{ result.airline_estimate.gate }}</strong></div>{% endif %}
+      </div>
+      {% endif %}
+      <p class="dataset-note">
+        The operating airline's own estimate against its own schedule, via AviationStack.
+        This is a reported fact, not a prediction — where it disagrees with the risk score
+        above, believe this one: the model estimates how likely a delay is from conditions,
+        while this is the airline telling you what it currently intends to do.
+      </p>
+    </div>
+    {% endif %}
+
     {% if result.rotation %}
     <div class="duration-card">
       <h4>Live aircraft check</h4>
