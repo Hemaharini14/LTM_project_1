@@ -217,10 +217,21 @@ if __name__ == "__main__":
         print(f"     {b['band']:14s} n={b['n']:4}  predicted {b['mean_predicted']:.3f}"
               f"   actually late {b['actually_late']:.3f}")
 
+    try:
+        from india_delay_model import info as _india_info
+        bundle = _india_info()
+    except Exception:
+        bundle = None
+    if bundle and bundle.get("collected_rows"):
+        print("\n  WARNING: the India model was trained on these same collected rows")
+        print(f"  ({bundle['collected_rows']} of them), so the AUC above is in-sample and")
+        print("  flatters it. The honest out-of-sample figure is the cross-validated")
+        print(f"  {bundle.get('cv_auc')} from train_india_model.py, where the 2026 rows are")
+        print("  held out fold by fold. Collect more outcomes and retrain to separate them.")
+
     print("\n  AUC is the number to trust. 0.5 is a coin flip; above it means the")
     print("  model puts delayed flights higher.")
     print("")
     print("  These rows are sampled across the whole day (is_representative=1),")
-    print("  so unlike a single-page sample the base rate here is a real estimate")
-    print("  and predicted-vs-actual is worth reading. It is still one day at a")
+    print("  so the base rate here is a real estimate. It is still one day at a")
     print("  few airports - accumulate more before refitting anything on it.")

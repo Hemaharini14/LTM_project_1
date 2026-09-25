@@ -117,55 +117,66 @@ Risk labels: **High ≥ 0.30**, **Moderate ≥ 0.15**, otherwise Low.
 
 ### How well it works
 
+There are **two models**, and which one scores a flight depends on the route.
+
+### DelayNetV2 — US and international routes
+
 The headline held-out number is **AUC 0.873**, but it splits sharply by whether
-the inbound aircraft's delay is known — and serving almost never knows it:
+the inbound aircraft's delay is known, and serving almost never knows it:
 
 | Held-out subgroup | AUC | n | Actual delay rate |
 |---|---|---|---|
 | `prior_leg_known` | 0.896 | 629,814 | 20.5% |
 | `prior_leg_unknown` — **what serving sends** | **0.713** | 185,704 | 10.6% |
 
-So 0.873 flatters the live product. The number to judge it by is 0.713.
+### The India model — why it had to exist
 
-Then the out-of-sample check: **real 2026 Indian departures** the model had
-never seen, scored from schedule and route alone. How they are sampled changes
-the answer, which is the first thing to know about them:
-
-| Sample | n | AUC | Actual delay rate |
-|---|---|---|---|
-| One page per airport | 139 | 0.713 | 56.1% |
-| **Spread across the day** | **354** | **0.594** | **42.1%** |
-
-**Read the second row.** A page of 100 out of ~1,800 lands inside one part of
-the day, and delays cluster by hour — at DEL on one day, offset 0 gave 28%
-delayed, offset 600 gave 64%, offset 1200 gave 23%. The single-page number
-flattered the model by 0.12 AUC and overstated the delay rate by 14 points.
-`collect_outcomes.py` now samples several pages spread across the day and marks
-those rows `is_representative = 1`; `check_model.py` scores only those once
-there are enough.
-
-So the honest figure is **AUC 0.594** — better than chance, but modestly. The
-model still ranks in the right direction and under-predicts throughout:
-
-Those come from [`src/check_model.py`](src/check_model.py), scoring outcomes
-collected by [`src/collect_outcomes.py`](src/collect_outcomes.py). Ranking by
-predicted risk against what really happened:
+DelayNetV2 saw 10,634 Indian rows out of 5.4M (**0.20%**), across four airports,
+with Chennai absent entirely. Worse, the features it weights most are
+*constants* on every Indian row:
 
 ```
-lowest predicted third   predicted 17%   actually late 32%
-middle third             predicted 26%   actually late 44%
-highest third            predicted 41%   actually late 50%
+origin_temp_f            1 distinct value   (placeholder)
+prev_leg_arrival_delay   1 distinct value   (constant)
+prev_leg_known           1 distinct value   (always 0)
 ```
 
-Monotonic, so the ranking is real, but flat — and every band under-predicts.
-Per carrier (`python src/check_model.py`), IndiGo is genuinely the most
-punctual operator in the sample and the model agrees, scoring it lowest of the
-Indian carriers; it just under-predicts it, 28.3% against 34.6% observed.
+On real Indian departures it scored **AUC 0.594** — and a logistic regression
+on nothing but the origin airport scored **0.701**. The data was predictable;
+the model was not learning it. [`src/train_india_model.py`](src/train_india_model.py)
+trains on what Indian flights actually have:
+
+| Model | AUC on real 2026 departures |
+|---|---|
+| DelayNetV2 | 0.594 |
+| India model, historical rows only | 0.657 |
+| **India model, historical + collected outcomes** | **0.723** |
+
+Cross-validated with the 2026 rows held out fold by fold. Indian routes are
+routed to it automatically; everything else stays on DelayNetV2, which is
+better at what it was trained on.
+
+### What it still gets wrong
+
+It **under-predicts**, and most at the low end:
+
+```
+lowest predicted third    predicted 11%   actually late 19%
+middle third              predicted 30%   actually late 32%
+highest third             predicted 53%   actually late 75%
+```
+
+So read the ranking, not the level. A 4% is meaningfully safer than a 30%, but
+it is not a 4-in-100 promise. The absolute scale is unsettled because the two
+training sources disagree about the base rate — historical Indian rows say
+27.1% of departures are 15+ minutes late, the 2026 sample says 42.1% — and one
+day at three airports cannot decide which is right. Re-run the trainer as
+outcomes accumulate.
 
 One thing that makes a correct number feel wrong: IndiGo's **median** real
 departure is 9 minutes late. The model reports the chance of crossing **15**
-minutes, so "a high probability of being late" and "a flight you would call on
-time" are both true at once.
+minutes, so "likely to be late" and "a flight you would call on time" are both
+true at once.
 
 ### Why destination weather is deliberately not used
 
@@ -264,7 +275,10 @@ reported in `adjustments`.
 ```
 api.py                  Flask app — all routes, both products
 src/                    Model, agents, tools, data clients (45 modules)
-  predict_delay_v2.py     the trained classifier + calibration
+  predict_delay_v2.py     the trained classifier + calibration, and the
+                          router that sends Indian routes to the model below
+  train_india_model.py    trains the India model (DelayNetV2 is 0.20% Indian)
+  india_delay_model.py    serves it, and decides which routes it covers
   explain_delay.py        per-flight "why", by counterfactual ablation
   recovery_graph.py       ReAct recovery agent (5 tools)
   chat_agent.py           ReAct chatbot (13 tools)
@@ -306,6 +320,7 @@ python src/check_model.py       # model vs real collected outcomes
 ## Rebuilding generated assets
 
 ```bash
+python src/train_india_model.py             # India delay model (AUC 0.594 -> 0.723)
 python src/build_delay_duration_lookup.py   # delay duration + cause lookup
 python src/evaluate_delay_model_v2.py       # metrics + probability calibrator
 python src/build_catalog.py DEL BOM --write # real schedules into the catalogue
@@ -343,8 +358,11 @@ httpx puts the failing URL — key included — into its error messages.
 
 Worth knowing before trusting a number:
 
-- **The model was trained on US data.** Real Indian coverage is BLR, BOM, CCU,
-  DEL, HYD. Chennai is not in it. `risk_is_modelled: false` marks these.
+- **Two models, and the Indian one is young.** DelayNetV2 covers US and
+  international routes on 5.4M rows; Indian routes go to a model trained on
+  10,988. It ranks far better than DelayNetV2 did there (0.723 against 0.594)
+  but under-predicts, especially at the low end. Read the ordering, not the
+  level.
 - **Fares are never real.** See above.
 - **The live aircraft check is retrospective without AviationStack.** Receiver
   networks report aircraft that have already flown, so OpenSky alone cannot say

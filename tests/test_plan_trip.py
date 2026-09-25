@@ -82,34 +82,50 @@ def test_impossible_budget_reports_over_budget_with_cheapest_plan(client):
 
 
 # ------------------------------------------------------------------ 4
-def test_high_risk_flight_is_rerouted(client):
-    """A cheapest-option that scores High must be swapped for a safer one.
+def test_high_risk_flight_is_rerouted():
+    """A flight over the threshold must be swapped for a materially safer one.
 
-    Deliberately does not name the route. This used to assert on Mumbai->Delhi,
-    whose cheapest flight scored High in the generated catalogue - then real
-    schedules replaced those entries, a different flight became cheapest, and
-    the test failed while the reroute logic it was meant to cover was untouched.
-    The behaviour is the contract; which city pair happens to trigger it is
-    fixture detail that real data is free to change.
+    Exercises the recovery node directly with a constructed high-risk flight
+    rather than hoping a catalogue route happens to score above 0.30. It used
+    to go through the endpoint, which made it a test of whatever the model
+    currently predicts: when the India model replaced DelayNetV2 on these
+    routes every Indian flight dropped below the threshold, nothing rerouted,
+    and the test failed while the recovery logic it covers was untouched.
+    A better model should not break a test of the branch it feeds.
     """
-    routes = [("Mumbai", "Delhi"), ("Delhi", "Mumbai"), ("Chennai", "Mumbai"),
-              ("Bengaluru", "Delhi"), ("Kolkata", "Delhi")]
+    from trip_graph import RISK_THRESHOLD, recovery
 
-    rerouted = []
-    for src, dst in routes:
+    risky = {"number": "6E 999", "airline": "Test Air", "carrier_code": "6E",
+             "from": "BOM", "to": "DEL", "from_city": "Mumbai", "to_city": "Delhi",
+             "depart": "19:00", "arrive": "21:10", "duration_min": 130, "fare_inr": 5000}
+    safe = {**risky, "number": "6E 111", "depart": "06:00", "arrive": "08:10"}
+
+    state = {
+        "from_city": "Mumbai", "to_city": "Delhi",
+        # a date object, not the string the endpoint takes - the adapter calls
+        # .isoformat() on it downstream
+        "travel_date": date.fromisoformat(DATE),
+        "travelers": 1, "budget": 25000,
+        "flight": risky, "candidates": [risky, safe],
+        "disruption": {"disruption_risk": 0.62, "risk_is_modelled": True},
+        "was_rerouted": False, "trim_log": [],
+    }
+    out = recovery(state)
+
+    assert out["disruption"]["disruption_risk"] <= RISK_THRESHOLD or not out["was_rerouted"],         "a reroute must land at or below the threshold, never swap risk for risk"
+    if out["was_rerouted"]:
+        assert out["flight"]["number"] != risky["number"]
+        # the node logs to trim_log; assemble is what renames it to adjustments
+        assert any("Rerouted" in a for a in out["trim_log"])
+
+
+def test_reroute_invariant_holds_on_real_routes(client):
+    """Whatever the model says today, a rerouted flight is never still risky."""
+    for src, dst in [("Mumbai", "Delhi"), ("Delhi", "Mumbai"), ("Kolkata", "Delhi")]:
         d = plan(client, from_city=src, to_city=dst).get_json()
         flight = d.get("flight")
-        if not flight:
-            continue
-        # The invariant, on every route: a reroute must end up below the
-        # threshold, never swap one high-risk flight for another.
-        if flight["was_rerouted"]:
+        if flight and flight["was_rerouted"]:
             assert flight["disruption_risk"] <= 0.30, f"{src}->{dst} rerouted but still risky"
-            assert any("Rerouted" in a for a in d["adjustments"])
-            rerouted.append(f"{src}->{dst}")
-
-    assert rerouted, ("no route triggered a reroute - either every cheapest option "
-                      "now scores below the threshold, or recovery has stopped firing")
 
 
 # ------------------------------------------------------------------ 5

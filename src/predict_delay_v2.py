@@ -104,6 +104,33 @@ def predict_delay_probability(carrier_code: str, origin_airport: str, destinatio
         origin_hourly_congestion = _typical_congestion(str(origin_airport).upper(), int(scheduled_hour))
     is_weekend = 1 if int(weekday) in (5, 6) else 0
 
+    # Indian routes go to a model trained on them. This network saw 10,634
+    # Indian rows out of 5.4M - 0.20% - across four airports, with placeholder
+    # constants in temperature and previous-leg delay, the two features it
+    # weights most. On real Indian departures it scores AUC 0.594 while a
+    # logistic regression on the origin airport alone scores 0.701. The
+    # dedicated model scores 0.723 on the same flights; see
+    # train_india_model.py. Everything else stays here, where the 5.4M rows
+    # are actually relevant.
+    #
+    # covers() is False when the artifact has never been trained, so this is a
+    # no-op on a fresh checkout rather than an import-time dependency.
+    try:
+        from india_delay_model import covers as _india_covers, predict as _india_predict
+        if _india_covers(origin_airport, destination_airport, carrier_code):
+            india_prob = _india_predict(
+                carrier_code=carrier_code, origin_airport=origin_airport,
+                destination_airport=destination_airport, weekday=weekday, month=month,
+                scheduled_elapsed_time=scheduled_elapsed_time,
+                origin_precip_in=origin_precip_in, origin_pressure=origin_pressure,
+                origin_visibility=origin_visibility, origin_wind_speed=origin_wind_speed,
+                scheduled_hour=scheduled_hour,
+                origin_hourly_congestion=origin_hourly_congestion)
+            if india_prob is not None:
+                return india_prob
+    except Exception as e:
+        print(f"[predict_delay_v2] India model unavailable, using DelayNetV2: {e}")
+
     # Features added with the aircraft-rotation work. A caller checking a flight in
     # advance cannot know how late the inbound aircraft ran, so these default to
     # "unknown" rather than to a value that reads as good news.

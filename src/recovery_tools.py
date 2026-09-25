@@ -83,10 +83,25 @@ def get_dataset_index() -> dict:
 
 
 def is_route_covered(origin_airport: str, destination_airport: str) -> bool:
-    """True only if BOTH airports appear somewhere in the training data."""
-    index = get_dataset_index()
-    airports = set(index["airports"])
-    return (origin_airport or "").upper() in airports and (destination_airport or "").upper() in airports
+    """True when some trained model can actually score this route.
+
+    Two sources now, not one. The unified dataset index is the original: both
+    airports must appear in it. But the India model is trained on its own
+    historical rows plus the real outcomes collected since, which covers
+    airports the unified dataset never had - Chennai among them. Before this,
+    a Chennai departure fell through to the reference-schedule branch and got
+    no prediction at all, even though a model that can score it exists.
+    """
+    o = (origin_airport or "").upper()
+    d = (destination_airport or "").upper()
+    airports = set(get_dataset_index()["airports"])
+    if o in airports and d in airports:
+        return True
+    try:
+        from india_delay_model import covers
+        return covers(o, d, "")
+    except Exception:
+        return False
 
 
 def get_carriers_for_route(origin_airport: str, destination_airport: str) -> list[str]:
