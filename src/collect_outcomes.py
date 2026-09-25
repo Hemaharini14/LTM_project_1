@@ -87,13 +87,35 @@ def _operating_row(rows: list[dict]) -> dict:
     return rows[0]
 
 
-def collect(origin_iata: str = "DEL", limit: int = 100) -> dict:
+def collect(origin_iata: str = "DEL", limit: int = 100, samples: int = 3) -> dict:
     """Fetch and store today's completed departures from one airport."""
     _ensure_table()
-    body = _get("flights", {"dep_iata": (origin_iata or "").upper(),
-                            "flight_status": "landed", "limit": limit})
-    if not body:
+    # SAMPLE ACROSS THE DAY, not the first page of it. Delays cluster by hour,
+    # and one page of 100 out of ~1,800 lands inside a single part of the day.
+    # Measured at DEL on one day: offset 0 gave 28% delayed, offset 600 gave
+    # 64%, offset 1200 gave 23%. Whichever page you happen to read becomes
+    # "the delay rate", which is how the first collection reported 56%.
+    def _page(offset: int):
+        params = {"dep_iata": (origin_iata or "").upper(),
+                  "flight_status": "landed", "limit": limit}
+        if offset:
+            params["offset"] = offset
+        return _get("flights", params)
+
+    first = _page(0)
+    if not first:
         return {"stored": 0, "reason": "no data (no key, quota spent, or API down)"}
+    total = ((first.get("pagination") or {}).get("total")) or 0
+    pages = [first]
+    if samples > 1 and total > limit:
+        step = max(1, total // samples)
+        for n in range(1, samples):
+            offset = min(n * step, max(total - limit, 0))
+            more = _page(offset)
+            if more:
+                pages.append(more)
+    body = {"data": [r for pg in pages for r in (pg.get("data") or [])]}
+    spread = len(pages)
 
     rows = body.get("data") or []
 
@@ -122,7 +144,7 @@ def collect(origin_iata: str = "DEL", limit: int = 100) -> dict:
                      origin, destination, scheduled_departure, scheduled_arrival,
                      actual_departure, departure_delay_min, arrival_delay_min,
                      was_delayed, icao24, is_representative)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """, (
                     now, f.get("flight_date") or str(date.today()),
                     (al.get("iata") or "").upper() or None,
@@ -133,6 +155,7 @@ def collect(origin_iata: str = "DEL", limit: int = 100) -> dict:
                     int(delay), arr.get("delay"),
                     1 if int(delay) >= DELAY_THRESHOLD_MIN else 0,
                     ((f.get("aircraft") or {}).get("icao24") or "").lower() or None,
+                    1 if spread > 1 else 0,
                 ))
                 stored += conn.total_changes and 1 or 0
             except Exception as e:
@@ -144,6 +167,8 @@ def collect(origin_iata: str = "DEL", limit: int = 100) -> dict:
 
     return {
         "origin": origin_iata.upper(),
+        "pages_sampled": spread,
+        "representative": spread > 1,
         "returned": len(rows),
         "distinct_departures": len(groups),
         "skipped_no_delay_figure": skipped,
@@ -164,6 +189,11 @@ if __name__ == "__main__":
     for k, v in result.items():
         if k != "origin":
             print(f"   {k:26s} {v}")
-    print("\nNote: raw_delayed_share is NOT the delay rate - the sample is one "
-          "page of many and\n      carries a selection bias. It is stored with "
-          "is_representative=0 for that reason.")
+    if result.get("representative"):
+        print(f"\nSampled {result['pages_sampled']} pages spread across the day, "
+              "so raw_delayed_share is a usable estimate - rows stored with "
+              "is_representative=1.")
+    else:
+        print("\nOnly one page was read, and a page lands inside a single "
+              "part of the day, so raw_delayed_share is NOT the delay rate. "
+              "Stored with is_representative=0.")

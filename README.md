@@ -127,29 +127,45 @@ the inbound aircraft's delay is known — and serving almost never knows it:
 
 So 0.873 flatters the live product. The number to judge it by is 0.713.
 
-Then the out-of-sample check: 139 **real 2026 Indian departures** the model had
-never seen, scored from schedule and route alone.
+Then the out-of-sample check: **real 2026 Indian departures** the model had
+never seen, scored from schedule and route alone. How they are sampled changes
+the answer, which is the first thing to know about them:
 
-| Measure | Value |
-|---|---|
-| Real 2026 AUC | **0.713** |
-| With origin weather from a live forecast | **0.722** |
+| Sample | n | AUC | Actual delay rate |
+|---|---|---|---|
+| One page per airport | 139 | 0.713 | 56.1% |
+| **Spread across the day** | **354** | **0.594** | **42.1%** |
 
-The real-world figure lands on its held-out subgroup prediction almost exactly
-— 0.713 against 0.7134. A US-trained model, on Indian routes, in a different
-year, performing as its own held-out data said it would for these conditions.
+**Read the second row.** A page of 100 out of ~1,800 lands inside one part of
+the day, and delays cluster by hour — at DEL on one day, offset 0 gave 28%
+delayed, offset 600 gave 64%, offset 1200 gave 23%. The single-page number
+flattered the model by 0.12 AUC and overstated the delay rate by 14 points.
+`collect_outcomes.py` now samples several pages spread across the day and marks
+those rows `is_representative = 1`; `check_model.py` scores only those once
+there are enough.
+
+So the honest figure is **AUC 0.594** — better than chance, but modestly. The
+model still ranks in the right direction and under-predicts throughout:
 
 Those come from [`src/check_model.py`](src/check_model.py), scoring outcomes
 collected by [`src/collect_outcomes.py`](src/collect_outcomes.py). Ranking by
 predicted risk against what really happened:
 
 ```
-lowest predicted third   53% actually late
-middle third             60%
-highest third            81%
+lowest predicted third   predicted 17%   actually late 32%
+middle third             predicted 26%   actually late 44%
+highest third            predicted 41%   actually late 50%
 ```
 
-Monotonic — the model does rank real flights it has never seen.
+Monotonic, so the ranking is real, but flat — and every band under-predicts.
+Per carrier (`python src/check_model.py`), IndiGo is genuinely the most
+punctual operator in the sample and the model agrees, scoring it lowest of the
+Indian carriers; it just under-predicts it, 28.3% against 34.6% observed.
+
+One thing that makes a correct number feel wrong: IndiGo's **median** real
+departure is 9 minutes late. The model reports the chance of crossing **15**
+minutes, so "a high probability of being late" and "a flight you would call on
+time" are both true at once.
 
 ### Why destination weather is deliberately not used
 
@@ -334,9 +350,11 @@ Worth knowing before trusting a number:
   networks report aircraft that have already flown, so OpenSky alone cannot say
   which airframe will operate a future flight. AviationStack's schedule closes
   that gap for today's flights only.
-- **Collected outcomes are not a random sample.** One page of many, arriving
-  with almost no on-time flights, so the raw delay rate in `flight_outcomes` is
-  an artefact of selection. It is stored with `is_representative = 0`, and the
-  calibrator is deliberately *not* refitted on it — AUC survives a biased
-  sample, calibration does not.
+- **Collected outcomes are one day at three airports.** They are now sampled
+  across the day rather than from a single page — which moved the measured AUC
+  from 0.713 to 0.594 and the delay rate from 56% to 42%, so the sampling
+  mattered more than anything else measured here. Rows carry
+  `is_representative`; older single-page rows are kept but not scored. The
+  calibrator is still *not* refitted on any of it: 354 rows from one day is
+  evidence, not a distribution.
 - **Cold start is ~90 seconds** for the first request on a new route.
