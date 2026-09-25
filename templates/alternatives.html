@@ -17,6 +17,26 @@
 <div class="panel">
     <form method="post" action="{{ url_for('flight_alternatives') }}" class="form-stack budget-subform">
 
+      <fieldset>
+        <legend>Who is travelling</legend>
+        <p class="muted">Used to carry the right party size through to the booking site,
+          so you are not re-entering it there.</p>
+        <div class="form-grid">
+          <label>Adults
+            <input type="number" name="adults" min="1" max="9"
+                   value="{{ party.adults if party else 1 }}" required>
+          </label>
+          <label>Children <span class="muted">(2-11)</span>
+            <input type="number" name="children" min="0" max="8"
+                   value="{{ party.children if party else 0 }}">
+          </label>
+          <label>Infants <span class="muted">(under 2)</span>
+            <input type="number" name="infants" min="0" max="9"
+                   value="{{ party.infants if party else 0 }}">
+          </label>
+        </div>
+      </fieldset>
+
       <p class="muted">Tell us what's already arranged. Anything marked booked won't be
         trimmed to pay for the disruption — that money is already spent, so "freeing" it
         wouldn't actually fund anything.</p>
@@ -88,8 +108,29 @@
       {% if f.departure_time %}<span class="muted">Departs {{ f.departure_time }} → Arrives {{ f.arrival_time }}</span>{% endif %}
       <span class="badge risk-{{ f.risk_label|lower }}">{{ f.risk_label }} ({{ (f.delay_probability * 100) | round(1) }}%)</span>
       <span class="muted">{{ f.scheduled_elapsed_time }} min flight</span>
+      {% if f.booking %}
+      {% if loop.index0 == recommendation.recommended_booking_index %}
+      <span class="badge admin-badge yes">Recommended to book</span>
+      {% endif %}
+      <div class="booking-row">
+        <a class="btn btn-primary btn-sm" href="{{ f.booking[0].url }}"
+           target="_blank" rel="noopener noreferrer">Book on {{ f.booking[0].name }} →</a>
+        {% for alt in f.booking[1:] %}
+        <a class="booking-alt" href="{{ alt.url }}"
+           target="_blank" rel="noopener noreferrer">{{ alt.name }}</a>
+        {% endfor %}
+      </div>
+      {% endif %}
     </div>
     {% endfor %}
+    {% if party_label %}
+    <p class="dataset-note">
+      Booking links search for <strong>{{ party_label }}</strong> on this route and date.
+      They open a search on the travel site — nothing is reserved or paid here, and no
+      detail about you is sent. Fares are shown by the site itself; the estimates in this
+      app are not quotes.
+    </p>
+    {% endif %}
   </div>
   <p class="dataset-note">No fare data available — schedule and delay-risk only.</p>
   {% endif %}

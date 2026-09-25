@@ -862,3 +862,23 @@ fieldset legend { color: var(--teal); }
 }
 .flight-map .leaflet-tooltip::before { border-top-color: var(--hairline); }
 .plane-icon { transition: transform 0.4s linear; }
+
+/* --- Booking links on alternative flight cards ---------------------------- */
+.booking-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.6rem;
+}
+.btn-sm {
+  padding: 0.4rem 0.8rem;
+  font-size: 0.85rem;
+}
+.booking-alt {
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.booking-alt:hover { color: var(--teal); }

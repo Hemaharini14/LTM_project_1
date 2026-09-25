@@ -34,6 +34,7 @@ from opensky import (bbox_for_route, callsign_for, live_rotation, live_traffic,
                      rotation_from_icao24)
 from aviationstack import flight_now
 from weather_live import airport_weather
+from booking import describe_party, links_for_flight
 from recovery_graph import build_graph
 from recovery_tools import get_dataset_index, is_route_covered, lookup_flight_by_number
 from trip_planner import plan_budget_trip
@@ -589,6 +590,14 @@ def flight_alternatives():
         }
         priority = request.form.get("priority", "cost")
 
+        # Party size, carried through to the booking site so nobody retypes it.
+        # Infants are capped at one per adult, which is what every airline and
+        # every one of these sites enforces anyway.
+        adults = max(1, min(_int_field(request.form, "adults", 1), 9))
+        children = max(0, min(_int_field(request.form, "children", 0), 8))
+        infants = max(0, min(_int_field(request.form, "infants", 0), adults))
+        session["party"] = {"adults": adults, "children": children, "infants": infants}
+
         # Categories the traveller has already paid for - these must not be
         # trimmed to fund the disruption (see budget_optimizer.reallocate_budget).
         committed = [c for c in request.form.getlist("committed") if c.endswith("_cost")]
@@ -602,16 +611,24 @@ def flight_alternatives():
 
         state = {**inputs, "priority": priority, "budget": budget,
                  "committed": committed, "planned_spots": planned_spots,
+                 "adults": adults, "children": children, "infants": infants,
                  "stay_name": request.form.get("stay_name", "").strip()}
-        state.pop("travel_date", None)
+        travel_date = state.pop("travel_date", None)
         outcome = _recovery_app.invoke(state)
         outcome["assumed_hotel_nights"] = ASSUMED_RECOVERY_HOTEL_NIGHTS
+
+        # Every option gets a link, not only the one the agent singled out - the
+        # agent's pick is a recommendation, not a restriction on what you may book.
+        for f in outcome.get("alternative_flights") or []:
+            f["booking"] = links_for_flight(f, travel_date, adults, children, infants)
         recommendation = outcome
         db.save_flight_check(session["user_id"], inputs, risk["probability"],
                              risk["label"], outcome)
 
+    party = session.get("party") or {"adults": 1, "children": 0, "infants": 0}
     return render_template("alternatives.html", recommendation=recommendation,
-                            flight=inputs, risk=risk)
+                            flight=inputs, risk=risk, party=party,
+                            party_label=describe_party(**party))
 
 
 # ---------------------------------------------------------------- budget trip planner

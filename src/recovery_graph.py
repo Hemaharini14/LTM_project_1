@@ -37,6 +37,7 @@ load_dotenv()
 from langchain_core.tools import tool
 from langchain_core.messages import SystemMessage, HumanMessage
 
+from booking import describe_party, links_for_flight
 from predict_delay_v2 import predict_delay_probability, risk_label
 from recovery_tools import search_alternative_flights, search_hotel_options, get_destination_weather
 from budget_optimizer import reallocate_budget, summarize_budget
@@ -197,7 +198,29 @@ def _agentic_recovery(trip: dict, delay_probability: float, label: str) -> dict:
         return (f"Extra cost: ${extra_cost:.2f}. Shortfall: ${shortfall:.2f}. "
                 + ("; ".join(trim_log) if trim_log else "No trimming needed."))
 
-    tools = [search_alternatives, search_hotels, check_weather, reallocate_trip_budget]
+    @tool
+    def booking_link(option: int = 1) -> str:
+        """Booking search link for alternative flight #option (1-based).
+        Call after search_alternatives, for the one you recommend."""
+        alts = collected.get("alternative_flights") or []
+        if not alts:
+            return "No alternatives searched yet - call search_alternatives first."
+        idx = max(1, min(int(option or 1), len(alts))) - 1
+        chosen = alts[idx]
+        links = links_for_flight(chosen, trip.get("travel_date"),
+                                  adults=trip.get("adults", 1),
+                                  children=trip.get("children", 0),
+                                  infants=trip.get("infants", 0))
+        if not links:
+            return "Could not build a booking link for that flight."
+        collected["recommended_booking_index"] = idx
+        party = describe_party(trip.get("adults", 1), trip.get("children", 0),
+                                trip.get("infants", 0))
+        return (f"{chosen['carrier']} {chosen['flight_number']} is bookable for "
+                f"{party} on {links[0]['name']}.")
+
+    tools = [search_alternatives, search_hotels, check_weather, reallocate_trip_budget,
+             booking_link]
     from langgraph.prebuilt import create_react_agent
     agent = create_react_agent(llm, tools)
 
@@ -258,6 +281,10 @@ def _agentic_recovery(trip: dict, delay_probability: float, label: str) -> dict:
         "trim_log": collected["trim_log"] or [],
         "alternative_search_weekday": collected["alternative_search_weekday"],
         "hotel_search_nightly_budget": collected["hotel_search_nightly_budget"],
+        # Which alternative the agent actually chose to offer for booking, if it
+        # called that tool at all - the links themselves are attached to every
+        # option downstream, this only marks the recommended one.
+        "recommended_booking_index": collected.get("recommended_booking_index"),
         "recommendation_text": recommendation_text,
         "mode": mode,
     }
