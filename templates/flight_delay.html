@@ -120,6 +120,18 @@
       <span class="risk-percent">{{ (result.probability * 100) | round(1) }}%</span>
       <span class="risk-label">{{ result.label }} risk</span>
     </div>
+    {# "39% High" reads as "this flight is in trouble" when it means "39% chance
+       of pushing back 15+ minutes late". On Indian routes the median real delay
+       sits around 13 minutes - just under the line - so a high probability of
+       crossing it is compatible with a flight most people would call on time.
+       Saying what the number measures costs one line and prevents that. #}
+    <p class="dataset-note">
+      Chance of departing <strong>15 or more minutes late</strong>. That is the industry
+      cut-off the model was trained on, not a measure of how long any delay would run —
+      a flight can very often cross it by a few minutes and still feel on time.
+      {% if result.duration %}The estimate below says how long delays on this route
+      actually last when they happen.{% endif %}
+    </p>
 
     {% if result.inputs.weather_source == "forecast" %}
     <p class="dataset-note">

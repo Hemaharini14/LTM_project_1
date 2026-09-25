@@ -20,16 +20,22 @@
   if (!origin || !dest) return;
 
   var map = L.map(el, { scrollWheelZoom: false, attributionControl: true });
-  // Keyless CARTO basemap: no API key reaches the browser, and the dark palette
-  // matches the page instead of fighting it.
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-    attribution:
-      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> ' +
-      '&copy; <a href="https://carto.com/attributions">CARTO</a> · aircraft ' +
-      '<a href="https://opensky-network.org">OpenSky Network</a>',
-    subdomains: "abcd",
-    maxZoom: 11,
-  }).addTo(map);
+  // Esri's dark canvas: keyless, and no API key reaches the browser.
+  //
+  // This replaced CARTO, which started stamping "API KEY REQUIRED" across the
+  // tiles. Two things to keep straight if it is ever swapped again: Esri
+  // numbers tiles {z}/{y}/{x}, NOT the {z}/{x}/{y} Leaflet hands you - get it
+  // backwards and you silently render the wrong hemisphere, mostly ocean. And
+  // there is no {r} retina suffix here on purpose; the @2x variant is exactly
+  // what a provider tends to gate behind a key first.
+  L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/" +
+    "World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}", {
+      attribution:
+        'Basemap &copy; <a href="https://www.esri.com">Esri</a> · aircraft ' +
+        '<a href="https://opensky-network.org">OpenSky Network</a>',
+      maxZoom: 11,
+    }).addTo(map);
 
   var planeLayer = L.layerGroup().addTo(map);
   var fitted = false;

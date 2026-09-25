@@ -142,8 +142,29 @@ def evaluate() -> dict:
             "actually_late": round(late / len(chunk), 3),
         })
 
+    # Per carrier, because "is it right?" is usually asked about one airline.
+    # Its own predicted-vs-actual is the only thing that answers it: intuition
+    # about an airline is about how late it USUALLY runs, which is a different
+    # question from how often it crosses the 15-minute line.
+    by_carrier = {}
+    for row, prob in scored:
+        by_carrier.setdefault(row["carrier_iata"] or "??", []).append(
+            (prob, int(row["was_delayed"]), row["departure_delay_min"]))
+    carriers = []
+    for code, vals in sorted(by_carrier.items(), key=lambda kv: -len(kv[1])):
+        if len(vals) < 3:
+            continue
+        late = sorted(v[2] for v in vals)
+        carriers.append({
+            "carrier": code, "n": len(vals),
+            "mean_predicted": round(sum(v[0] for v in vals) / len(vals), 3),
+            "actually_late": round(sum(v[1] for v in vals) / len(vals), 3),
+            "median_minutes_late": late[len(late) // 2],
+        })
+
     flagged = sum(1 for s in scores if risk_label(s) != "Low")
     return {
+        "by_carrier": carriers,
         "flights_scored": len(scores),
         "auc": round(auc, 3) if auc is not None else None,
         "mean_predicted": round(mean_pred, 3),
@@ -166,6 +187,15 @@ if __name__ == "__main__":
     print(f"  mean predicted probability                 {res['mean_predicted']}")
     print(f"  actual share delayed in this sample        {res['actual_delayed_rate']}")
     print(f"  flagged above Low risk                     {res['flagged_not_low']}/{res['flights_scored']}")
+    if res.get("by_carrier"):
+        print("\n  by carrier (predicted vs what really happened):")
+        print(f"     {'':5s} {'n':>4s} {'predicted':>10s} {'actual':>8s} {'median late':>12s}")
+        for c in res["by_carrier"]:
+            print(f"     {c['carrier']:5s} {c['n']:>4} {c['mean_predicted']:>10.1%} "
+                  f"{c['actually_late']:>8.1%} {c['median_minutes_late']:>9} min")
+        print("     a carrier can sit just under the 15-minute line and still score")
+        print("     a high probability of crossing it - those are different questions")
+
     print("\n  by predicted band:")
     for b in res["bands"]:
         print(f"     {b['band']:14s} n={b['n']:4}  predicted {b['mean_predicted']:.3f}"
