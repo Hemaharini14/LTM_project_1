@@ -69,5 +69,12 @@ BTS_CONGESTION_LOOKUP_PATH = os.path.join(OUTPUT_DIR, "congestion_lookup_bts.jso
 WEATHER_RAW_PATH = os.path.join(DATA_DIR, "GlobalWeatherRepository.csv")
 WEATHER_CLEAN_PATH = os.path.join(OUTPUT_DIR, "cleaned_global_weather.csv")
 
+# Indexed, disk-backed copy of UNIFIED_FLIGHT_WEATHER_CLEAN_PATH - see
+# build_flight_catalog_db.py. recovery_tools.py queries this instead of
+# loading the full 864MB/5.4M-row CSV into memory at startup; a deploy host
+# with ~512MB RAM can run the whole app this way instead of needing ~2-3GB
+# for that one in-memory DataFrame.
+FLIGHT_CATALOG_DB_PATH = os.path.join(OUTPUT_DIR, "flight_catalog.db")
+
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(PLOTS_DIR, exist_ok=True)

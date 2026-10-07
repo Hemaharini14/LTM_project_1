@@ -47,10 +47,13 @@ frontends. There is no separate frontend server.
 | `/admin` | Model accuracy, calibration, predicted-vs-actual samples |
 | `/health` | Liveness/readiness check — model + database status, no login |
 
-> **First request is slow.** Loading the 5.4M-row flight dataset and the
-> transport tables takes about 90 seconds on a cold start. A background thread
-> warms the flight data; the transport tables are not yet warmed. Every request
-> after that is fast.
+> **Cold start is now a few seconds, not ~90.** The flight catalogue (5.4M
+> rows) used to be loaded whole into memory, costing both that ~90s and
+> ~2-3GB of standing RAM for the life of the process - more than most free
+> hosting tiers have at all. It's now an indexed SQLite file
+> (`src/build_flight_catalog_db.py`) queried per request instead, so nothing
+> is loaded until a query actually needs it. Transport tables still aren't
+> warmed at startup.
 
 ---
 
@@ -227,8 +230,10 @@ The model's weights come from the BTS 2025 training set above. The **live
 catalogue of real historical flights** that recovery/alternatives/chatbot
 search over — real carriers, flight numbers, scheduled times — is a separate
 file, still the original 2019 US + India dataset
-(`outputs/cleaned_flight_weather_unified.csv`, the "5.4M-row flight dataset"
-loaded at cold start). Each of those rows also carries its own real origin
+(`outputs/cleaned_flight_weather_unified.csv`, converted to an indexed
+SQLite file — `outputs/flight_catalog.db`, `build_flight_catalog_db.py` —
+queried per request instead of loaded whole into memory; see "Cold start"
+above). Each of those rows also carries its own real origin
 *and* destination weather, which is now passed to the model too
 ([`src/recovery_tools.py`](src/recovery_tools.py)) — it was already in the
 file, just not used. Moving that catalogue itself to BTS 2025 is a larger,
@@ -367,6 +372,7 @@ python src/compare_delay_models.py          # compares all artifact dirs against
 python src/train_india_model.py             # India delay model (AUC 0.594 -> 0.723)
 python src/build_delay_duration_lookup.py   # delay duration + cause lookup
 python src/build_catalog.py DEL BOM --write # real schedules into the catalogue
+python src/build_flight_catalog_db.py       # indexed SQLite copy for recovery_tools.py (run after the above)
 cd web && npm install && npm run build      # 3D showcase → static/showcase/
 ```
 
@@ -419,4 +425,4 @@ Worth knowing before trusting a number:
   `is_representative`; older single-page rows are kept but not scored. The
   calibrator is still *not* refitted on any of it: 354 rows from one day is
   evidence, not a distribution.
-- **Cold start is ~90 seconds** for the first request on a new route.
+- **Cold start is now a few seconds**, not the ~90s an earlier version took.

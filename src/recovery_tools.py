@@ -1,24 +1,26 @@
 """
 Data-grounded tools for the Module 2 recovery agent. Every function here
-reads from your actual cleaned CSVs - nothing is invented by an LLM.
+reads from your actual cleaned CSVs (or the indexed SQLite copy of the big
+one) - nothing is invented by an LLM.
 
 - search_alternative_flights: real historical flights on the same route,
   scored by the trained Module 1 model
 - search_hotel_options: real hotel pricing tiers from cleaned_hotel_bookings.csv
-- get_destination_weather: live conditions from cleaned_global_weather.csv
+- get_destination_weather: live conditions from WeatherAPI.com (falls back to
+  cleaned_global_weather.csv)
 """
 import os
+import sqlite3
 import sys
 import json
 import pandas as pd
 import numpy as np
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from config import HOTELS_CLEAN_PATH, UNIFIED_FLIGHT_WEATHER_CLEAN_PATH, WEATHER_CLEAN_PATH, OUTPUT_DIR
+from config import HOTELS_CLEAN_PATH, UNIFIED_FLIGHT_WEATHER_CLEAN_PATH, WEATHER_CLEAN_PATH, OUTPUT_DIR, FLIGHT_CATALOG_DB_PATH
 from predict_delay_v2 import predict_delay_probability, risk_label
 from weatherapi_live import live_weather
 
-_FLIGHTS_DF = None
 _HOTELS_DF = None
 _WEATHER_DF = None
 
@@ -26,19 +28,19 @@ DATASET_INDEX_PATH = os.path.join(OUTPUT_DIR, "dataset_index.json")
 _DATASET_INDEX = None
 
 
-def _load_flights():
-    global _FLIGHTS_DF
-    if _FLIGHTS_DF is None:
-        _FLIGHTS_DF = pd.read_csv(UNIFIED_FLIGHT_WEATHER_CLEAN_PATH, low_memory=False)
-        # Precomputed once. lookup_flight_by_number used to call .astype(str) on
-        # this column per request, which is ~70 seconds across 5.4M rows - the
-        # single slowest thing in the app. Doing it here costs that once, during
-        # the background preload nobody is waiting on.
-        _FLIGHTS_DF["_flight_no_str"] = (
-            _FLIGHTS_DF["flight_number"]
-            .astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
-        )
-    return _FLIGHTS_DF
+def _catalog_conn() -> sqlite3.Connection:
+    """One short-lived read-only connection per call, not a cached global -
+    SQLite connections are cheap to open and this keeps every query trivially
+    safe across gunicorn's multiple worker processes, unlike a single shared
+    in-memory DataFrame would be. Falls back to None if the indexed file
+    hasn't been built yet (see build_flight_catalog_db.py); callers treat
+    that exactly like "no real data for this route" rather than crashing.
+    """
+    if not os.path.exists(FLIGHT_CATALOG_DB_PATH):
+        return None
+    conn = sqlite3.connect(f"file:{FLIGHT_CATALOG_DB_PATH}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def _load_hotels():
@@ -117,10 +119,17 @@ def get_carriers_for_route(origin_airport: str, destination_airport: str) -> lis
     """Real carrier codes that actually have historical flights on this exact route -
     not just individually-covered airports (a route between two covered airports may
     still have zero real flights, e.g. never-observed pairings)."""
-    df = _load_flights()
-    subset = df[(df["origin_airport"] == (origin_airport or "").upper()) &
-                (df["destination_airport"] == (destination_airport or "").upper())]
-    return sorted(subset["carrier_code"].unique().tolist())
+    conn = _catalog_conn()
+    if conn is None:
+        return []
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT carrier_code FROM flights WHERE origin_airport = ? AND destination_airport = ?",
+            ((origin_airport or "").upper(), (destination_airport or "").upper()),
+        ).fetchall()
+    finally:
+        conn.close()
+    return sorted(r["carrier_code"] for r in rows)
 
 
 def lookup_flight_by_number(carrier_code: str, flight_number: str) -> dict | None:
@@ -132,17 +141,24 @@ def lookup_flight_by_number(carrier_code: str, flight_number: str) -> dict | Non
     should show that occurrence count so the user knows this is a real historical lookup, not a
     live schedule. Returns None if this carrier+flight number was never seen.
     """
-    df = _load_flights()
     wanted = str(flight_number).strip()
     if wanted.endswith(".0"):
         wanted = wanted[:-2]
-    subset = df[
-        (df["carrier_code"] == (carrier_code or "").upper()) &
-        (df["_flight_no_str"] == wanted)
-    ]
-    if subset.empty:
+    conn = _catalog_conn()
+    if conn is None:
+        return None
+    try:
+        rows = conn.execute(
+            "SELECT origin_airport, destination_airport, scheduled_elapsed_time "
+            "FROM flights WHERE carrier_code = ? AND flight_no_str = ?",
+            ((carrier_code or "").upper(), wanted),
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
         return None
 
+    subset = pd.DataFrame(rows, columns=["origin_airport", "destination_airport", "scheduled_elapsed_time"])
     grouped = subset.groupby(["origin_airport", "destination_airport"]).agg(
         scheduled_elapsed_time=("scheduled_elapsed_time", "median"),
         occurrences=("scheduled_elapsed_time", "count"),
@@ -196,12 +212,17 @@ def search_alternative_flights(origin_airport: str, destination_airport: str,
     OWN recorded weather (so the risk score reflects real conditions that
     were actually observed for that flight, not synthetic guesses).
     """
-    df = _load_flights()
-    subset = df[
-        (df["origin_airport"] == origin_airport) &
-        (df["destination_airport"] == destination_airport) &
-        (df["carrier_code"] != exclude_carrier)
-    ].copy()
+    conn = _catalog_conn()
+    if conn is None:
+        return []
+    try:
+        subset = pd.read_sql_query(
+            "SELECT * FROM flights WHERE origin_airport = ? AND destination_airport = ? "
+            "AND carrier_code != ?",
+            conn, params=(origin_airport, destination_airport, exclude_carrier),
+        )
+    finally:
+        conn.close()
     if subset.empty:
         return []
 

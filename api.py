@@ -82,18 +82,27 @@ _recovery_app = build_graph()
 
 
 def _preload_flight_data():
-    """Pull the ~5M-row flight table into memory in the background at startup.
+    """Touch the flight catalogue once at startup, off the critical path.
 
-    recovery_tools caches it after first use, but that first use was whoever
-    happened to click Plan or Recover first - they waited ~27s for a load that
-    has nothing to do with their request. Doing it here costs the same time
-    once, off the critical path, while the login page is already being served.
+    This used to mean reading the whole ~5.4M-row/864MB CSV into memory
+    (~27s, and ~2-3GB of RAM held for the life of the process - more than
+    most free hosting tiers have at all). The catalogue is now an indexed
+    SQLite file (build_flight_catalog_db.py) that recovery_tools.py queries
+    directly per request, so there's no multi-second load or standing memory
+    cost to warm here - this just opens the file once so the very first real
+    request isn't the one paying for the OS to fault it in from disk.
     """
     try:
-        from recovery_tools import _load_flights
-        _load_flights()
+        from recovery_tools import _catalog_conn
+        conn = _catalog_conn()
+        if conn is None:
+            print("[api] flight_catalog.db not found - run src/build_flight_catalog_db.py "
+                  "(alternatives/trip-planner search will return no results until then).")
+        else:
+            conn.execute("SELECT 1 FROM flights LIMIT 1")
+            conn.close()
     except Exception as e:
-        print(f"[api] flight-data preload failed, first request will load it: {e}")
+        print(f"[api] flight-catalog preload skipped: {e}")
 
 
 threading.Thread(target=_preload_flight_data, daemon=True).start()

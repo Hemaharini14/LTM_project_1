@@ -7,6 +7,13 @@
 # models/artifacts/, the app still starts (every LLM/model path degrades
 # gracefully - see README's "Where an LLM deliberately does not run"), it just
 # has no delay predictions until a model exists.
+#
+# Real RAM needed is now modest (a few hundred MB, fits a free hosting tier) -
+# outputs/flight_catalog.db (build_flight_catalog_db.py) is an INDEXED file
+# queried per request, not loaded whole into memory the way the 864MB flight
+# CSV used to be. If that file is missing, recovery/alternatives search
+# returns no results rather than crashing - run that script once after
+# mounting/generating outputs/.
 FROM python:3.11-slim
 
 WORKDIR /app
