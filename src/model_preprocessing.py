@@ -42,6 +42,10 @@ CONT_COLS = [
     # Destination-side weather, previously computed and thrown away.
     "dest_temp_f", "dest_precip_in", "dest_pressure", "dest_visibility",
     "dest_wind_speed", "dest_weather_known",
+    # Real reported route distance (BTS/India both carry it) - a flight's
+    # physical length, distinct from scheduled_elapsed_time (which already
+    # bakes in each carrier's own padding/taxi assumptions for that route).
+    "distance_miles",
 ]
 
 TARGET_COL = "is_delayed"
@@ -116,3 +120,29 @@ def load_clean_flight_weather(path: str) -> pd.DataFrame:
         if col in df.columns:
             df[col] = df[col].astype(str)
     return df
+
+
+def chronological_split(df: pd.DataFrame, test_size: float = 0.15,
+                        time_col: str = "scheduled_departure_dt") -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Validation split ordered by real scheduled departure time, not random.
+
+    A random split (the original approach here) puts rows from the SAME day as
+    validation rows into training too - weather, congestion and even specific
+    flights can repeat within a day, so the model gets a preview of conditions
+    adjacent to what it's "held out" on. That inflates a held-out score without
+    the model actually having learned anything about the future.
+
+    Sorting by time and taking the LAST test_size fraction as validation means
+    every validation row is later than every training row - the model can only
+    use what it could genuinely have known in advance, the same discipline
+    compare_delay_models.py's true out-of-time test applies at a coarser
+    (year-boundary) grain. This is what the problem being time-dependent
+    actually calls for, not a convenience.
+
+    India's rows (2019-2020) sort earlier than any 2025 BTS row and land
+    entirely in training - harmless, since India is validated separately via
+    its own dedicated model (train_india_model.py), not through this split.
+    """
+    ordered = df.sort_values(time_col, kind="mergesort").reset_index(drop=True)
+    cut = int(round(len(ordered) * (1 - test_size)))
+    return ordered.iloc[:cut].copy(), ordered.iloc[cut:].copy()

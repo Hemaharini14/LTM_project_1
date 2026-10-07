@@ -1,0 +1,15 @@
+flight/
+venv/
+env/
+__pycache__/
+*.pyc
+dataset/
+outputs/
+models/artifacts/
+models/artifacts_backup/
+models/artifacts_pre_bts/
+models/artifacts_bts/
+*.db
+.env
+.git/
+web/node_modules/

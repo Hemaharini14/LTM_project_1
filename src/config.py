@@ -52,6 +52,16 @@ UNIFIED_FLIGHT_WEATHER_CLEAN_PATH = os.path.join(OUTPUT_DIR, "cleaned_flight_wea
 # have an exact historical row to read it from directly.
 CONGESTION_LOOKUP_PATH = os.path.join(OUTPUT_DIR, "congestion_lookup.json")
 
+# US BTS "Reporting Carrier On-Time Performance" (transtats.bts.gov), recent
+# years, with Open-Meteo weather at both ends - see build_bts_dataset.py. Kept
+# under separate names so the 2019-trained model and its files stay intact
+# until the BTS model is compared against it.
+BTS_TRAIN_YEARS = [2025]
+BTS_CLEAN_PATH = os.path.join(OUTPUT_DIR, "cleaned_bts_flights.csv")
+BTS_TEST_CLEAN_PATH = os.path.join(OUTPUT_DIR, "cleaned_bts_test_flights.csv")
+BTS_UNIFIED_CLEAN_PATH = os.path.join(OUTPUT_DIR, "cleaned_flight_weather_bts_unified.csv")
+BTS_CONGESTION_LOOKUP_PATH = os.path.join(OUTPUT_DIR, "congestion_lookup_bts.json")
+
 # GlobalWeatherRepository.csv — appears to be a rolling current-conditions
 # snapshot (has last_updated_epoch), NOT historical data matching the 2019
 # flights. Treated as a separate "live destination weather lookup" source

@@ -120,6 +120,11 @@
       <span class="risk-percent">{{ (result.probability * 100) | round(1) }}%</span>
       <span class="risk-label">{{ result.label }} risk</span>
     </div>
+    {% if result.real_price %}
+    <p class="dataset-note">Real price today (Google Flights): <strong>{{ result.real_price.price_usd | money }}</strong>
+      ({{ result.real_price.airline }}{% if result.real_price.stops == 0 %}, nonstop{% elif result.real_price.stops %}, {{ result.real_price.stops }} stop{{ 's' if result.real_price.stops != 1 }}{% endif %})
+      {%- if result.real_price.departure_time %}, real scheduled {{ result.real_price.departure_time[-5:] }} → {{ result.real_price.arrival_time[-5:] }}{% endif %}.</p>
+    {% endif %}
     {# "39% High" reads as "this flight is in trouble" when it means "39% chance
        of pushing back 15+ minutes late". On Indian routes the median real delay
        sits around 13 minutes - just under the line - so a high probability of

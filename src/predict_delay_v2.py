@@ -82,7 +82,8 @@ def predict_delay_probability(carrier_code: str, origin_airport: str, destinatio
                                prev_leg_arrival_delay: float | None = None,
                                leg_of_day: int | None = None,
                                scheduled_turnaround_min: float | None = None,
-                               dest_weather: dict | None = None) -> float:
+                               dest_weather: dict | None = None,
+                               distance_miles: float | None = None) -> float:
     """Returns a probability in [0, 1] that the flight departs 15+ minutes late.
 
     origin_temp_known should be False when origin_temp_f is a filled-in
@@ -150,15 +151,29 @@ def predict_delay_probability(carrier_code: str, origin_airport: str, destinatio
     dest_weather = dest_weather or {}
     feats["dest_weather_known"] = 1 if dest_weather else 0
 
+    # Unlike the other optional fields, distance is always computable with no
+    # caller effort - real airport coordinates exist for virtually every route -
+    # so a missing value is filled with the real great-circle distance rather
+    # than going straight to the training-mean fallback below. Training itself
+    # uses the carrier's own REPORTED distance (BTS/India real data), which this
+    # approximates closely but is not identical to (no accounting for routing) -
+    # see reference_data.distance_miles_between.
+    if distance_miles is None:
+        from reference_data import distance_miles_between
+        distance_miles = distance_miles_between(origin_airport, destination_airport)
+
     # Anything still unknown is filled with the encoder's own training mean for that
     # column, which the same encoder then scales to exactly 0 - "no signal" - instead
     # of a made-up reading. The *_known flags above tell the model which rows those are.
+    # Harmless no-op against a model trained before this column existed - the loaded
+    # encoder only reads the columns it was actually fit with (self.cont_cols).
     for col, supplied in [("scheduled_turnaround_min", scheduled_turnaround_min),
                           ("dest_temp_f", dest_weather.get("temp_f")),
                           ("dest_precip_in", dest_weather.get("precip_in")),
                           ("dest_pressure", dest_weather.get("pressure")),
                           ("dest_visibility", dest_weather.get("visibility")),
-                          ("dest_wind_speed", dest_weather.get("wind_speed"))]:
+                          ("dest_wind_speed", dest_weather.get("wind_speed")),
+                          ("distance_miles", distance_miles)]:
         feats[col] = float(supplied) if supplied is not None else encoder.cont_mean.get(col, 0.0)
 
     row = pd.DataFrame([{

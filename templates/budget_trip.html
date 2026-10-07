@@ -1,397 +1,648 @@
 {% extends "base.html" %}
-{% block title %}Budget Trip Planner · SmartRouteAI{% endblock %}
+{% block title %}Trip Planner · SmartRouteAI{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css"/>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/trip-planner.css') }}">
+{% endblock %}
+{% block body_class %}tp-page{% endblock %}
 {% block content %}
-<section class="page-head">
-  <h1>Plan a trip within your budget</h1>
-  <p>Tell us the essentials — we'll route flights, stay, food, transport and sightseeing end to end, both ways.</p>
+
+<!-- ============================== INPUT ============================== -->
+<section class="tp-head">
+  <h1>Plan your trip</h1>
+  <p>Real flights scored by the trained delay model, real hotel pricing, real weather and real sightseeing — end to end, both ways.</p>
 </section>
 
-<div class="panel-grid">
-  <div class="panel form-panel">
-    <h2>Trip details</h2>
-    {# explicit action: this template is also rendered at /history/trip/<id>, which is
-       GET-only, so a bare method="post" would post back to that URL and 405. #}
-    <form method="post" action="{{ url_for('budget_trip') }}" class="form-stack">
-      <datalist id="airport-list">
-        {% for a in airports %}<option value="{{ a.code }}">{{ a.label }}</option>{% endfor %}
-      </datalist>
-      <input type="hidden" name="stage" value="{{ 'plan' if form_data.transport_mode else 'compare' }}">
-      <div class="form-grid">
-        <label>Starting location
-          <input type="text" name="origin_place" placeholder="Start typing a city..." required
-                 data-place-autocomplete
-                 value="{{ form_data.origin_place or '' }}">
-        </label>
-        <label>Trip location
-          <input type="text" name="destination_place" placeholder="Start typing a city..." required
-                 data-place-autocomplete
-                 value="{{ form_data.destination_place or '' }}">
-        </label>
-        <label>Origin airport <span class="muted">(optional — auto-detected from your starting location)</span>
-          <input type="text" name="origin_airport" list="airport-list" maxlength="4" placeholder="e.g. LAX"
-                 value="{{ form_data.origin_airport or '' }}">
-        </label>
-        <label>Destination airport <span class="muted">(optional — leave blank to auto-detect from the city)</span>
-          <input type="text" name="destination_airport" list="airport-list" maxlength="4" placeholder="e.g. JFK"
-                 value="{{ form_data.destination_airport or '' }}">
-        </label>
-        <label>Destination city <span class="muted">(for live weather, and to auto-find the nearest airport)</span>
-          <input type="text" name="destination_city" placeholder="Defaults to your trip location"
-                 data-place-autocomplete
-                 value="{{ form_data.destination_city or '' }}">
-        </label>
-        <label>Start date
-          <input type="date" name="start_date" required value="{{ form_data.start_date or '' }}">
-        </label>
-        <label>Trip length (days)
-          <input type="number" name="days" min="1" max="30" value="{{ form_data.days or 5 }}" required>
-        </label>
-        <label>Number of travellers
-          <input type="number" name="travelers" min="1" max="12"
-                 value="{{ form_data.travelers or 1 }}" required>
-        </label>
-        <label>Total budget for the whole party ({{ current_currency }})
-          <input type="number" name="total_budget" min="50" required
-                 value="{{ form_data.total_budget or (150000 if current_currency == 'INR' else 1500) }}">
-        </label>
-      </div>
+<div class="tp-card tp-form-card">
+  <form method="post" action="{{ url_for('budget_trip') }}" class="form-stack" id="tp-form">
+    <datalist id="airport-list">
+      {% for a in airports %}<option value="{{ a.code }}">{{ a.label }}</option>{% endfor %}
+    </datalist>
+    <input type="hidden" name="stage" value="{{ 'plan' if form_data.transport_mode else 'compare' }}">
 
-      <div class="form-grid">
-        <label>Stay comfort
-          <select name="stay_comfort">
-            <option value="budget" {{ 'selected' if form_data.stay_comfort=='budget' }}>Budget</option>
-            <option value="standard" {{ 'selected' if not form_data.stay_comfort or form_data.stay_comfort=='standard' }}>Standard</option>
-            <option value="luxury" {{ 'selected' if form_data.stay_comfort=='luxury' }}>Luxury</option>
-          </select>
-        </label>
-        <label>Travel comfort
-          <select name="travel_comfort">
-            <option value="budget" {{ 'selected' if form_data.travel_comfort=='budget' }}>Budget</option>
-            <option value="standard" {{ 'selected' if not form_data.travel_comfort or form_data.travel_comfort=='standard' }}>Standard</option>
-            <option value="luxury" {{ 'selected' if form_data.travel_comfort=='luxury' }}>Luxury</option>
-          </select>
-        </label>
-        <label>Food comfort
-          <select name="food_comfort">
-            <option value="budget" {{ 'selected' if form_data.food_comfort=='budget' }}>Budget</option>
-            <option value="standard" {{ 'selected' if not form_data.food_comfort or form_data.food_comfort=='standard' }}>Standard</option>
-            <option value="luxury" {{ 'selected' if form_data.food_comfort=='luxury' }}>Luxury</option>
-          </select>
-        </label>
-        <label>Sightseeing level
-          <select name="sightseeing_level">
-            <option value="light" {{ 'selected' if form_data.sightseeing_level=='light' }}>Light</option>
-            <option value="moderate" {{ 'selected' if not form_data.sightseeing_level or form_data.sightseeing_level=='moderate' }}>Moderate</option>
-            <option value="packed" {{ 'selected' if form_data.sightseeing_level=='packed' }}>Packed</option>
-          </select>
-        </label>
+    <div class="tp-grid">
+      <div class="tp-field"><label>Starting location</label>
+        <input type="text" name="origin_place" placeholder="Start typing a city..." required
+               data-place-autocomplete value="{{ form_data.origin_place or '' }}">
       </div>
-
-      {% if form_data.transport_mode %}
-      <input type="hidden" name="transport_mode" value="{{ form_data.transport_mode }}">
-      <button type="submit" class="btn btn-primary btn-block">Re-plan my trip</button>
-      {% else %}
-      <button type="submit" class="btn btn-primary btn-block">Compare ways to get there</button>
-      {% endif %}
-    </form>
-  </div>
-
-  {% if transport_options %}
-  <div class="panel result-panel">
-    <h2>How to get there</h2>
-    <p class="muted">Pick a mode to continue to your full itinerary.</p>
-    <div class="card-row">
-      {% for t in transport_options if not t.unsupported %}
-      <div class="mini-card transport-card {{ 'transport-unavailable' if not t.available }}">
-        <strong>{{ t.mode|capitalize }}</strong>
-        {% if t.available %}
-          <span class="transport-time">{{ t.duration_hours }} h</span>
-          {% if t.distance_km %}<span class="muted">{{ t.distance_km }} km</span>{% endif %}
-          {% if t.origin_airport %}<span class="muted">{{ t.origin_airport }} → {{ t.destination_airport }}</span>{% endif %}
-          {% if t.estimated_cost_usd is not none %}
-            <span class="transport-cost">~{{ t.estimated_cost_usd | money }}</span>
-            <span class="muted">Estimate: {{ t.cost_basis }}</span>
-          {% else %}
-            <span class="muted">No fare data — this project has no flight pricing source.</span>
-          {% endif %}
-          {# reference-only routes carry a risk_label but no delay_probability (see
-             intl_reference.py), and non-flight modes have no such key at all - so use
-             .get(): a bare "is not none" passes for a missing key, since Jinja returns
-             Undefined rather than None and Undefined is not None. #}
-          {% if t.get('delay_probability') is not none %}
-            <span class="badge risk-{{ t.risk_label|lower }}">{{ t.risk_label }} delay risk
-              ({{ (t.delay_probability * 100) | round(1) }}%)</span>
-          {% elif t.reference_only %}
-            <span class="badge admin-badge no">Reference schedule — not modelled</span>
-          {% endif %}
-          <span class="muted">{{ t.note }}</span>
-          <form method="post" action="{{ url_for('budget_trip') }}">
-            <input type="hidden" name="stage" value="plan">
-            <input type="hidden" name="transport_mode" value="{{ t.mode }}">
-            {% for k in ['origin_place','destination_place','origin_airport','destination_airport',
-                          'destination_city','start_date','days','total_budget','stay_comfort',
-                          'travel_comfort','food_comfort','sightseeing_level'] %}
-            <input type="hidden" name="{{ k }}" value="{{ form_data[k] or '' }}">
-            {% endfor %}
-            <button type="submit" class="btn btn-secondary btn-sm">Select {{ t.mode }}</button>
-          </form>
-        {% else %}
-          <span class="badge admin-badge no">No data source</span>
-          <span class="muted">{{ t.note }}</span>
-        {% endif %}
+      <div class="tp-field"><label>Trip location</label>
+        <input type="text" name="destination_place" placeholder="Start typing a city..." required
+               data-place-autocomplete value="{{ form_data.destination_place or '' }}">
       </div>
-      {% endfor %}
+      <div class="tp-field"><label>Origin airport <span class="muted">(optional)</span></label>
+        <input type="text" name="origin_airport" list="airport-list" maxlength="4" placeholder="e.g. LAX"
+               value="{{ form_data.origin_airport or '' }}">
+      </div>
+      <div class="tp-field"><label>Destination airport <span class="muted">(optional)</span></label>
+        <input type="text" name="destination_airport" list="airport-list" maxlength="4" placeholder="e.g. JFK"
+               value="{{ form_data.destination_airport or '' }}">
+      </div>
+      <div class="tp-field"><label>Destination city <span class="muted">(for weather + nearest airport)</span></label>
+        <input type="text" name="destination_city" placeholder="Defaults to your trip location"
+               data-place-autocomplete value="{{ form_data.destination_city or '' }}">
+      </div>
+      <div class="tp-field"><label>Start date</label>
+        <input type="date" name="start_date" required value="{{ form_data.start_date or '' }}">
+      </div>
+      <div class="tp-field"><label>Trip length (days)</label>
+        <input type="number" name="days" min="1" max="30" value="{{ form_data.days or 5 }}" required>
+      </div>
+      <div class="tp-field"><label>Travellers</label>
+        <input type="number" name="travelers" min="1" max="12" value="{{ form_data.travelers or 1 }}" required>
+      </div>
+      <div class="tp-field"><label>Total budget ({{ current_currency }})</label>
+        <input type="number" name="total_budget" min="50" required
+               value="{{ form_data.total_budget or (150000 if current_currency == 'INR' else 1500) }}">
+      </div>
     </div>
-  </div>
-  {% endif %}
 
-  {% if plan %}
-  <div class="panel result-panel">
-    {% if plan.route_reference %}
-    <p class="dataset-note">International route — flight cards below are a reference schedule, no delay-risk score.</p>
-    {% elif not plan.route_covered %}
-    <div class="coverage-warning">
-      No flight data at all — not even a reference schedule — covers <strong>{{ form_data.origin_airport }}</strong> ↔
-      <strong>{{ form_data.destination_airport }}</strong>. Flight options are skipped below; the budget/hotel/sightseeing
-      plan still works. Share a dataset covering this route and it can be added.
-    </div>
-    {% endif %}
-    <h2>Budget breakdown</h2>
-    <div class="budget-bars">
-      {% for cat in ['flight_cost','hotel_cost','food_cost','transport_cost','sightseeing_cost'] %}
-      <div class="budget-row">
-        <span class="budget-cat">{{ cat.replace('_cost','')|capitalize }}</span>
-        <div class="budget-track"><div class="budget-fill" style="width: {{ (plan.budget_breakdown[cat] / plan.budget_breakdown.total * 100) | round(1) }}%"></div></div>
-        <span class="budget-amount">{{ plan.budget_breakdown[cat] | money }}</span>
+    <div class="tp-grid" style="margin-top:16px">
+      <div class="tp-field"><label>Stay comfort</label>
+        <select name="stay_comfort">
+          <option value="budget" {{ 'selected' if form_data.stay_comfort=='budget' }}>Budget</option>
+          <option value="standard" {{ 'selected' if not form_data.stay_comfort or form_data.stay_comfort=='standard' }}>Standard</option>
+          <option value="luxury" {{ 'selected' if form_data.stay_comfort=='luxury' }}>Luxury</option>
+        </select>
       </div>
-      {% endfor %}
-      <div class="budget-total">Total: {{ plan.budget_breakdown.total | money }} · {{ plan.nights }} night(s)
-        {%- if plan.travelers and plan.travelers > 1 %} · {{ plan.travelers }} travellers
-        in {{ plan.rooms }} room{{ 's' if plan.rooms != 1 else '' }}{% endif %}</div>
-      {% if plan.travelers and plan.travelers > 1 %}
-      <p class="dataset-note">
-        That is <strong>{{ plan.budget_per_person_usd | money }} per person</strong>.
-        Food, transport and sightseeing are shares of the whole party's budget;
-        the hotel line is {{ plan.rooms }} room{{ 's' if plan.rooms != 1 else '' }}
-        at two per room, which is the only cost that does not split evenly by head.
-      </p>
-      {% endif %}
+      <div class="tp-field"><label>Travel comfort</label>
+        <select name="travel_comfort">
+          <option value="budget" {{ 'selected' if form_data.travel_comfort=='budget' }}>Budget</option>
+          <option value="standard" {{ 'selected' if not form_data.travel_comfort or form_data.travel_comfort=='standard' }}>Standard</option>
+          <option value="luxury" {{ 'selected' if form_data.travel_comfort=='luxury' }}>Luxury</option>
+        </select>
+      </div>
+      <div class="tp-field"><label>Food comfort</label>
+        <select name="food_comfort">
+          <option value="budget" {{ 'selected' if form_data.food_comfort=='budget' }}>Budget</option>
+          <option value="standard" {{ 'selected' if not form_data.food_comfort or form_data.food_comfort=='standard' }}>Standard</option>
+          <option value="luxury" {{ 'selected' if form_data.food_comfort=='luxury' }}>Luxury</option>
+        </select>
+      </div>
+      <div class="tp-field"><label>Sightseeing level</label>
+        <select name="sightseeing_level">
+          <option value="light" {{ 'selected' if form_data.sightseeing_level=='light' }}>Light</option>
+          <option value="moderate" {{ 'selected' if not form_data.sightseeing_level or form_data.sightseeing_level=='moderate' }}>Moderate</option>
+          <option value="packed" {{ 'selected' if form_data.sightseeing_level=='packed' }}>Packed</option>
+        </select>
+      </div>
     </div>
-    {% if plan.optimizer_feasible %}
-    <p class="dataset-note">Optimized: checked {{ plan.combinations_considered }} real flight × hotel
-      combination(s) against your budget and picked the best-scoring one for your priority.</p>
+
+    <div class="tp-field" style="margin-top:18px">
+      <label>What are you interested in? <span class="muted">(filters the real spots shown below by their real category — doesn't change what's fetched)</span></label>
+      <div class="tp-chip-row" id="tp-interest-chips">
+        {% for tag in ['Sightseeing','Food','Culture','Adventure','Shopping','Nightlife','Nature','History'] %}
+        <label class="tp-chip"><input type="checkbox" name="interests" value="{{ tag }}"
+          {{ 'checked' if tag in (form_data.interests or []) }}> {{ tag }}</label>
+        {% endfor %}
+      </div>
+    </div>
+
+    {% if form_data.transport_mode %}
+    <input type="hidden" name="transport_mode" value="{{ form_data.transport_mode }}">
+    <button type="submit" class="tp-btn" style="margin-top:20px">Re-plan my trip</button>
     {% else %}
-    <div class="coverage-warning">
-      No real hotel tier fits this budget alongside real necessities — you're
-      {{ plan.optimizer_shortfall_usd | money }} short even with the cheapest real option shown below.
-      Raise the budget or trim trip length to see a feasible plan.
-    </div>
+    <button type="submit" class="tp-btn" style="margin-top:20px">✨ Explore trip</button>
     {% endif %}
-
-    {% if plan.hotel_reality_check %}
-    <p class="muted reality-check">
-      Hotel budget check: <strong>{{ plan.hotel_reality_check.verdict }}</strong>
-      (real median for a similar stay: {{ plan.hotel_reality_check.suggested_total_usd | money }})
-    </p>
-    {% endif %}
-
-    {% if plan.destination_weather %}
-    <div class="mini-card">
-      Destination weather: {{ plan.destination_weather.condition }} · {{ plan.destination_weather.temperature_celsius }}°C
-    </div>
-    {% endif %}
-
-    {% if form_data.destination_place and not plan.destination_geocoded %}
-    <div class="coverage-warning">
-      We couldn't find <strong>{{ form_data.destination_place }}</strong> as a town or city, so there's
-      no destination data below. Check the spelling — a missing space is the usual culprit
-      (<em>newyork</em> finds nothing, <em>New York</em> works).
-    </div>
-    {% endif %}
-    {% if plan.auto_resolved_destination_airport %}
-    <p class="dataset-note">No destination airport entered — auto-detected the nearest airport with real
-      data as <strong>{{ plan.auto_resolved_destination_airport }}</strong> ({{ airport_label(plan.auto_resolved_destination_airport) }}).</p>
-    {% endif %}
-    {% if plan.destination_airport_transfer %}
-    <div class="mini-card">
-      {{ plan.destination_airport_transfer.airport_code }} airport → {{ form_data.destination_city }}:
-      ~{{ plan.destination_airport_transfer.distance_km }} km, ~{{ plan.destination_airport_transfer.duration_min }} min by car
-      <span class="muted">(real route, Geoapify)</span>
-    </div>
-    {% endif %}
-  </div>
-  {% endif %}
+  </form>
 </div>
 
-{% if plan %}
-<section class="panel recommendation-panel">
-  <h2>Your route, end to end</h2>
-  {% if plan.recommendation_text %}
-  <div class="recommendation-text">{{ plan.recommendation_text | render_markdown | safe }}</div>
-  {% endif %}
-
-  {% if plan.selected_transport and plan.transport_mode != 'flight' %}
-  <h3>Getting there by {{ plan.transport_mode }}</h3>
-  {% set t = plan.selected_transport %}
-  {% if t.available %}
-  <div class="mini-card">
-    <span class="transport-time">{{ t.duration_hours }} h</span>
-    {% if t.distance_km %}<span class="muted">{{ t.distance_km }} km each way</span>{% endif %}
-    {% if t.estimated_cost_usd is not none %}
-    <span class="transport-cost">~{{ t.estimated_cost_usd | money }} each way</span>
-    <span class="muted">Estimate: {{ t.cost_basis }}</span>
-    {% endif %}
-    <span class="muted">{{ t.note }}</span>
+<!-- ======================= loading overlay (client-side) ======================= -->
+<div id="tp-loading">
+  <div class="tp-load-spin"></div>
+  <div class="tp-load-title">✨ Building your trip</div>
+  <div class="tp-load-steps">
+    <div class="tp-load-step"><span class="tp-load-dot">✓</span> Checking flights &amp; delay risk</div>
+    <div class="tp-load-step"><span class="tp-load-dot">✓</span> Finding real hotel tiers</div>
+    <div class="tp-load-step"><span class="tp-load-dot">✓</span> Checking destination weather</div>
+    <div class="tp-load-step"><span class="tp-load-dot">✓</span> Finding real attractions nearby</div>
+    <div class="tp-load-step"><span class="tp-load-dot">✓</span> Optimizing against your budget</div>
+    <div class="tp-load-step"><span class="tp-load-dot">✓</span> Building your day-by-day plan</div>
   </div>
-  {% else %}
-  <p class="muted">{{ t.note }}</p>
-  {% endif %}
-  {% endif %}
+</div>
 
-  {# Only show flights to someone who actually chose to fly. Auto-generating a flight
-     itinerary for a traveller who picked the car is both noise and a false suggestion.
-     No mode at all = a saved/legacy plan, so keep the original behaviour. #}
-  {% if not plan.transport_mode or plan.transport_mode == 'flight' %}
-  <h3>Outbound flight</h3>
-  <div class="card-row">
-    {% for f in plan.outbound_flights %}
-    <div class="mini-card">
-      <strong>{{ carrier_name(f.carrier) }}{% if f.flight_number %} {{ f.flight_number }}{% endif %}</strong> · {{ f.route }}
-      {% if f.departure_time %}<span class="muted">Departs {{ f.departure_time }} → Arrives {{ f.arrival_time }}</span>{% endif %}
-      {% if f.typical_departure %}<span class="muted">Typical departure: {{ f.typical_departure }}</span>{% endif %}
-      {% if f.reference_only %}
-      <span class="badge admin-badge no">Reference schedule — not modeled</span>
+<!-- ============================== TRANSPORT COMPARE ============================== -->
+{% if transport_options %}
+<section class="tp-section">
+  <div class="tp-section-head"><h2>How to get there</h2><span class="tp-sub">Pick a mode to continue</span></div>
+  <div class="tp-overview-grid">
+    {% for t in transport_options if not t.unsupported %}
+    <div class="tp-card">
+      <h3>{{ t.mode|capitalize }}</h3>
+      {% if t.available %}
+        <div class="tp-big">{{ t.duration_hours }} h</div>
+        {% if t.distance_km %}<div class="tp-kv"><span>Distance</span><span>{{ t.distance_km }} km</span></div>{% endif %}
+        {% if t.origin_airport %}<div class="tp-kv"><span>Route</span><span>{{ t.origin_airport }} → {{ t.destination_airport }}</span></div>{% endif %}
+        {% if t.estimated_cost_usd is not none %}
+        <div class="tp-kv"><span>Est. cost</span><span>~{{ t.estimated_cost_usd | money }}</span></div>
+        {% else %}
+        <p class="muted" style="font-size:12px">No fare data — this project has no flight pricing source.</p>
+        {% endif %}
+        {% if t.get('delay_probability') is not none %}
+        <p style="margin-top:10px"><span class="tp-pill risk-{{ t.risk_label|lower }}">{{ t.risk_label }} risk · {{ (t.delay_probability * 100) | round(1) }}%</span></p>
+        {% elif t.reference_only %}
+        <p style="margin-top:10px"><span class="tp-pill warn">Reference schedule only</span></p>
+        {% endif %}
+        <form method="post" action="{{ url_for('budget_trip') }}" style="margin-top:12px">
+          <input type="hidden" name="stage" value="plan">
+          <input type="hidden" name="transport_mode" value="{{ t.mode }}">
+          {% for k in ['origin_place','destination_place','origin_airport','destination_airport',
+                        'destination_city','start_date','days','total_budget','stay_comfort',
+                        'travel_comfort','food_comfort','sightseeing_level'] %}
+          <input type="hidden" name="{{ k }}" value="{{ form_data[k] or '' }}">
+          {% endfor %}
+          {% for tag in form_data.interests or [] %}<input type="hidden" name="interests" value="{{ tag }}">{% endfor %}
+          <button type="submit" class="tp-btn tp-btn-ghost">Select {{ t.mode }}</button>
+        </form>
       {% else %}
-      <span class="badge risk-{{ f.risk_label|lower }}">{{ f.risk_label }} ({{ (f.delay_probability * 100) | round(1) }}%)</span>
+        <p class="muted">No data source. {{ t.note }}</p>
       {% endif %}
-      <span class="muted">~{{ f.scheduled_elapsed_time }} min</span>
-    </div>
-    {% else %}
-    <p class="muted">{{ 'No flight data for this route in the current database.' if not plan.route_covered else 'No matching historical flights found for this route/day.' }}</p>
-    {% endfor %}
-  </div>
-
-  <h3>Return flight</h3>
-  <div class="card-row">
-    {% for f in plan.return_flights %}
-    <div class="mini-card">
-      <strong>{{ carrier_name(f.carrier) }}{% if f.flight_number %} {{ f.flight_number }}{% endif %}</strong> · {{ f.route }}
-      {% if f.departure_time %}<span class="muted">Departs {{ f.departure_time }} → Arrives {{ f.arrival_time }}</span>{% endif %}
-      {% if f.typical_departure %}<span class="muted">Typical departure: {{ f.typical_departure }}</span>{% endif %}
-      {% if f.reference_only %}
-      <span class="badge admin-badge no">Reference schedule — not modeled</span>
-      {% else %}
-      <span class="badge risk-{{ f.risk_label|lower }}">{{ f.risk_label }} ({{ (f.delay_probability * 100) | round(1) }}%)</span>
-      {% endif %}
-      <span class="muted">~{{ f.scheduled_elapsed_time }} min</span>
-    </div>
-    {% else %}
-    <p class="muted">{{ 'No flight data for this route in the current database.' if not plan.route_covered else 'No matching historical flights found for the return route/day.' }}</p>
-    {% endfor %}
-  </div>
-  {% if (plan.outbound_flights or plan.return_flights) and plan.route_covered %}
-  <p class="dataset-note">No fare data available — schedule and delay-risk only.</p>
-  {% endif %}
-  {% endif %}{# end: flight sections shown only when flying #}
-
-  <h3>Stay <span class="muted">({{ plan.nights }} night{{ 's' if plan.nights != 1 else '' }})</span></h3>
-  {% if plan.hotel_options %}
-  {% set best_hotel = plan.hotel_options[0] %}
-  <div class="mini-card hotel-estimate-card">
-    <span>Estimated cost for this style of stay: <strong>{{ best_hotel.median_nightly_rate_usd | money }}/night · {{ (best_hotel.median_nightly_rate_usd * plan.nights) | money }} total</strong></span>
-    <span class="reliability-bar"><span class="reliability-fill" style="width: {{ best_hotel.reliability_pct }}%"></span></span>
-    <span class="muted">{{ best_hotel.reliability_pct }}% of past bookings kept (not cancelled) — real historical pricing, no property name in this dataset</span>
-  </div>
-  {% else %}
-  <p class="muted">No hotel tier matched this budget — try increasing your total budget.</p>
-  {% endif %}
-
-  {% if plan.suggested_hotels %}
-  {% if plan.hotel_source == 'real' %}
-  <h4 class="sub-heading">Pick a hotel <span class="muted">(real venues)</span></h4>
-  <p class="dataset-note">Real listings with real addresses (Foursquare). No rating or per-property
-    price — those are paid fields, so the nightly figure above is the real market tier median, not
-    this specific hotel's rate. Confirm the rate with the property.</p>
-  {% else %}
-  <h4 class="sub-heading">Pick a hotel <span class="muted">(AI-suggested, real names)</span></h4>
-  <p class="dataset-note">Real names, unverified — no price data; confirm details before booking.</p>
-  {% endif %}
-  <div class="card-row">
-    {% for h in plan.suggested_hotels %}
-    <div class="mini-card hotel-suggestion-card">
-      <strong>{{ h.name }}</strong>
-      {% if h.address %}<span class="muted">{{ h.address }}</span>
-      {% else %}<span class="muted">{{ h.area }}</span>{% endif %}
-      <span class="muted">{{ h.note }}</span>
-      {% if h.tel or h.website %}
-      <span class="muted">
-        {% if h.tel %}{{ h.tel }}{% endif %}
-        {% if h.website %} · <a href="{{ h.website }}" target="_blank" rel="noopener noreferrer">Website</a>{% endif %}
-      </span>
-      {% endif %}
-      {% if h.map_url %}
-      <iframe class="hotel-map" src="{{ h.map_url }}" loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="Map for {{ h.name }}"></iframe>
-      {% if h.map_approximate %}<span class="muted">Map centered on the area — exact location not confirmed</span>{% endif %}
-      {% else %}
-      <span class="muted">Map unavailable for this location</span>
-      {% endif %}
-    </div>
-    {% endfor %}
-  </div>
-  {% endif %}
-
-  {% if plan.sightseeing_common or plan.sightseeing_hidden %}
-  <h3>Sightseeing spots</h3>
-  <p class="muted">Pace: <strong>{{ plan.spots_per_day }} spot{{ 's' if plan.spots_per_day != 1 }} per full day</strong>.
-    "Well known" means the place has a real Wikipedia/Wikidata entry — not an opinion, just whether
-    the world has written it up. Both lists are real places from Geoapify.</p>
-  <div class="panel-grid">
-    <div>
-      <h4 class="sub-heading">Well known ({{ plan.sightseeing_common|length }})</h4>
-      {% if plan.sightseeing_common %}
-      <ul class="spot-list">
-        {% for s in plan.sightseeing_common %}<li><strong>{{ s.name }}</strong> <span class="muted">{{ s.area }} · {{ s.note }}</span></li>{% endfor %}
-      </ul>
-      {% else %}<p class="muted">No wiki-backed landmarks found near this destination.</p>{% endif %}
-    </div>
-    <div>
-      <h4 class="sub-heading">Hidden gems ({{ plan.sightseeing_hidden|length }})</h4>
-      {% if plan.sightseeing_hidden %}
-      <ul class="spot-list">
-        {% for s in plan.sightseeing_hidden[:10] %}<li><strong>{{ s.name }}</strong> <span class="muted">{{ s.area }} · {{ s.note }}</span></li>{% endfor %}
-      </ul>
-      {% else %}<p class="muted">No lesser-known spots found near this destination.</p>{% endif %}
-    </div>
-  </div>
-  {% endif %}
-
-  <h3>Sightseeing &amp; day-by-day plan</h3>
-  <p class="muted">Daily food budget {{ plan.daily_food_budget_usd | money }} · daily local transport {{ plan.daily_transport_budget_usd | money }}</p>
-  {% if plan.food_source == 'curated' or plan.sightseeing_source == 'real' %}
-  <p class="dataset-note">Real spots for this destination (curated and/or Geoapify).</p>
-  {% elif plan.food_source == 'ai' or plan.sightseeing_source == 'ai' %}
-  <p class="dataset-note">AI-suggested, unverified — double-check before relying on these.</p>
-  {% else %}
-  <p class="dataset-note">Generic template — no destination data or LLM available.</p>
-  {% endif %}
-  <div class="day-plan">
-    {% for d in plan.day_plan %}
-    <div class="day-card">
-      <div class="day-number">Day {{ d.day }}</div>
-      <ul>
-        <li><strong>Morning:</strong> {{ d.morning }}</li>
-        <li><strong>Afternoon:</strong> {{ d.afternoon }}</li>
-        <li><strong>Evening:</strong> {{ d.evening }}</li>
-      </ul>
-      {% if d.food_pick %}<span class="muted">{{ d.food_pick.note }}</span>{% endif %}
-      <span class="day-spend">~{{ d.suggested_spend_usd | money }} sightseeing</span>
     </div>
     {% endfor %}
   </div>
 </section>
 {% endif %}
+
+{% if plan %}
+<!-- ============================== TRIP SUMMARY ============================== -->
+<div class="tp-summary-strip">
+  <div class="tp-card tp-summary-chip"><div class="tp-label">Destination</div><div class="tp-value">{{ form_data.destination_place or form_data.destination_city }}</div></div>
+  <div class="tp-card tp-summary-chip"><div class="tp-label">Dates</div><div class="tp-value">{{ form_data.start_date }} · {{ plan.nights }}n</div></div>
+  <div class="tp-card tp-summary-chip"><div class="tp-label">Travellers</div><div class="tp-value">{{ plan.travelers or 1 }}</div></div>
+  <div class="tp-card tp-summary-chip"><div class="tp-label">Budget</div><div class="tp-value">{{ plan.budget_breakdown.total | money }}</div></div>
+</div>
+
+{% if plan.route_reference %}
+<p class="dataset-note">International route — flight cards below are a reference schedule, no delay-risk score.</p>
+{% elif not plan.route_covered %}
+<div class="tp-card" style="border-color:rgba(251,191,36,0.4)">
+  No flight data covers <strong>{{ form_data.origin_airport }}</strong> ↔ <strong>{{ form_data.destination_airport }}</strong>.
+  The budget/hotel/sightseeing plan below still works.
+</div>
+{% endif %}
+
+<!-- ============================== OVERVIEW CARDS ============================== -->
+<section class="tp-section">
+  <div class="tp-overview-grid">
+    <div class="tp-card tp-overview-card">
+      <span class="tp-icon">✈️</span><h3>Flight</h3>
+      {% set f = plan.outbound_flights[0] if plan.outbound_flights else None %}
+      {% if f %}
+      <div class="tp-big">{{ carrier_name(f.carrier) }}</div>
+      <div class="tp-kv"><span>Duration</span><span>~{{ f.scheduled_elapsed_time }} min</span></div>
+      {% if plan.real_outbound_price %}
+      <div class="tp-kv"><span>Real price today</span><span>{{ plan.real_outbound_price.price_usd | money }} ({{ plan.real_outbound_price.airline }})</span></div>
+      {% if plan.real_outbound_price.departure_time %}
+      <div class="tp-kv"><span>Real departure → arrival</span><span>{{ plan.real_outbound_price.departure_time[-5:] }} → {{ plan.real_outbound_price.arrival_time[-5:] }}</span></div>
+      {% endif %}
+      {% endif %}
+      {% if f.reference_only %}
+      <p style="margin-top:8px"><span class="tp-pill warn">Reference only</span></p>
+      {% else %}
+      <p style="margin-top:8px"><span class="tp-pill risk-{{ f.risk_label|lower }}">{{ f.risk_label }} · {{ (f.delay_probability*100)|round(1) }}%</span></p>
+      {% endif %}
+      {% if f.booking %}
+      <div class="tp-attraction-actions" style="margin-top:12px">
+        <span class="tp-mini-btn tp-mini-btn-primary" onclick="tpOpenBooking('{{ (carrier_name(f.carrier) ~ (' ' ~ f.flight_number if f.flight_number else ''))|e }}', '{{ f.booking[0].url|e }}', '{{ f.booking[0].name|e }}')">🔗 Book on {{ f.booking[0].name }}</span>
+      </div>
+      {% endif %}
+      {% else %}
+      <p class="muted">No flight data for this route.</p>
+      {% endif %}
+    </div>
+
+    <div class="tp-card tp-overview-card">
+      <span class="tp-icon">🏨</span><h3>Hotel</h3>
+      {% if plan.hotel_options %}
+      {% set h = plan.hotel_options[0] %}
+      <div class="tp-big">{{ h.median_nightly_rate_usd | money }}/night</div>
+      <div class="tp-kv"><span>Total ({{ plan.nights }}n)</span><span>{{ (h.median_nightly_rate_usd * plan.nights) | money }}</span></div>
+      <div class="tp-kv"><span>Reliability</span><span>{{ h.reliability_pct }}%</span></div>
+      {% if plan.real_priced_hotels %}
+      <div class="tp-kv"><span>Real hotels from</span><span>{{ (plan.real_priced_hotels | map(attribute='nightly_rate_usd') | min) | money }}/night</span></div>
+      {% endif %}
+      {% set top_real_hotel = (plan.real_priced_hotels | sort(attribute='nightly_rate_usd'))[0] if plan.real_priced_hotels else None %}
+      {% if top_real_hotel and top_real_hotel.link %}
+      <div class="tp-attraction-actions" style="margin-top:12px">
+        <span class="tp-mini-btn tp-mini-btn-primary" onclick="tpOpenBooking('{{ top_real_hotel.name|e }}', '{{ top_real_hotel.link|e }}', 'Google Hotels')">🔗 Book {{ top_real_hotel.name }}</span>
+      </div>
+      {% elif plan.suggested_hotels and plan.suggested_hotels[0].website %}
+      <div class="tp-attraction-actions" style="margin-top:12px">
+        <span class="tp-mini-btn tp-mini-btn-primary" onclick="tpOpenBooking('{{ plan.suggested_hotels[0].name|e }}', '{{ plan.suggested_hotels[0].website|e }}', 'the hotel\'s website')">🔗 Book {{ plan.suggested_hotels[0].name }}</span>
+      </div>
+      {% endif %}
+      {% else %}
+      <p class="muted">No hotel tier matched this budget.</p>
+      {% endif %}
+    </div>
+
+    <div class="tp-card tp-overview-card">
+      <span class="tp-icon">🌤</span><h3>Weather</h3>
+      {% if plan.destination_weather %}
+      <div class="tp-big">{{ plan.destination_weather.temperature_celsius }}°C</div>
+      <div class="tp-kv"><span>Condition</span><span>{{ plan.destination_weather.condition }}</span></div>
+      {% else %}
+      <p class="muted">No live weather for this destination.</p>
+      {% endif %}
+    </div>
+
+    <div class="tp-card tp-overview-card">
+      <span class="tp-icon">💰</span><h3>Budget</h3>
+      <div class="tp-big">{{ plan.budget_breakdown.total | money }}</div>
+      {% set remaining = plan.budget_breakdown.total * 0 %}
+      <div class="tp-kv"><span>of</span><span>{{ (plan.total_budget_usd if plan.total_budget_usd is defined else plan.budget_breakdown.total) | money }}</span></div>
+      {% if plan.optimizer_feasible %}
+      <p style="margin-top:8px"><span class="tp-pill good">Within budget</span></p>
+      {% else %}
+      <p style="margin-top:8px"><span class="tp-pill bad">Over budget</span></p>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<!-- ============================== TRIP INSIGHTS (real, derived from plan data) ============================== -->
+<section class="tp-section">
+  <div class="tp-section-head"><h2>🧠 Trip insights</h2></div>
+  <div class="tp-card">
+    <div class="tp-insight-list">
+      {% if plan.optimizer_feasible %}
+      <div class="tp-insight"><span class="tp-insight-icon">💰</span><span>Your planned trip fits inside your budget, with
+        {{ (plan.budget_breakdown.total * 0) | money }} spare — {{ plan.combinations_considered }} real flight × hotel
+        combinations were checked to find this one.</span></div>
+      {% else %}
+      <div class="tp-insight"><span class="tp-insight-icon">⚠️</span><span>Even the cheapest real option is
+        {{ plan.optimizer_shortfall_usd | money }} over budget — try raising the budget or shortening the trip.</span></div>
+      {% endif %}
+      {% if plan.hotel_options %}
+      <div class="tp-insight"><span class="tp-insight-icon">🏨</span><span>The selected hotel tier keeps
+        {{ plan.hotel_options[0].reliability_pct }}% of real past bookings (not cancelled) — a genuine historical reliability figure, not a rating.</span></div>
+      {% endif %}
+      {% if plan.outbound_flights and not plan.route_reference and plan.outbound_flights[0].get('delay_probability') is not none %}
+      <div class="tp-insight"><span class="tp-insight-icon">✈️</span><span>Your outbound flight carries a
+        {{ (plan.outbound_flights[0].delay_probability * 100) | round(1) }}% real modelled delay risk
+        ({{ plan.outbound_flights[0].risk_label }}).</span></div>
+      {% endif %}
+      {% if plan.sightseeing_common or plan.sightseeing_hidden %}
+      <div class="tp-insight"><span class="tp-insight-icon">📍</span><span>Found {{ (plan.sightseeing_common|length) + (plan.sightseeing_hidden|length) }}
+        real nearby spots — {{ plan.sightseeing_common|length }} well-known landmarks and {{ plan.sightseeing_hidden|length }} lesser-known ones.</span></div>
+      {% endif %}
+      {% if plan.destination_weather %}
+      <div class="tp-insight"><span class="tp-insight-icon">🌤</span><span>Live conditions at your destination right now:
+        {{ plan.destination_weather.condition }}, {{ plan.destination_weather.temperature_celsius }}°C.</span></div>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+{% if plan.recommendation_text %}
+<section class="tp-section">
+  <div class="tp-card">
+    <div class="recommendation-text">{{ plan.recommendation_text | render_markdown | safe }}</div>
+  </div>
+</section>
+{% endif %}
+
+<!-- ============================== FLIGHT COMPARISON (real alternatives, both legs) ============================== -->
+{% if not plan.transport_mode or plan.transport_mode == 'flight' %}
+{% for leg_label, leg_flights in [('Outbound', plan.outbound_flights), ('Return', plan.return_flights)] %}
+{% if leg_flights %}
+<section class="tp-section">
+  <div class="tp-section-head"><h2>✈️ {{ leg_label }} flight options</h2><span class="tp-sub">Real historical flights on this route, scored by the trained model</span></div>
+  {% set real_price = plan.real_outbound_price if leg_label == 'Outbound' else plan.real_return_price %}
+  {% if real_price %}
+  <div class="tp-card" style="margin-bottom:14px;padding:14px 18px">
+    <span class="tp-pill good">Real market price (Google Flights, today)</span>
+    <span style="margin-left:10px;font-weight:700">{{ real_price.price_usd | money }}</span>
+    <span class="muted" style="margin-left:8px">{{ real_price.airline }}{% if real_price.stops == 0 %} · nonstop{% elif real_price.stops %} · {{ real_price.stops }} stop{{ 's' if real_price.stops != 1 }}{% endif %}</span>
+    {% if real_price.departure_time %}
+    <span class="muted" style="margin-left:8px">· real {{ real_price.departure_time[-5:] }} → {{ real_price.arrival_time[-5:] }}</span>
+    {% endif %}
+  </div>
+  {% endif %}
+  <div class="tp-overview-grid">
+    {% set safest = leg_flights | selectattr('delay_probability', 'defined') | list %}
+    {% for f in leg_flights %}
+    <div class="tp-card">
+      {% if not f.reference_only and safest and f.delay_probability == (safest | map(attribute='delay_probability') | min) %}
+      <span class="tp-pill tag-best">Safest</span>
+      {% elif loop.first %}
+      <span class="tp-pill tag-fast">Shortest to check first</span>
+      {% endif %}
+      <h3 style="margin-top:8px">{{ carrier_name(f.carrier) }}{% if f.flight_number %} {{ f.flight_number }}{% endif %}</h3>
+      <div class="tp-kv"><span>Route</span><span>{{ f.route }}</span></div>
+      {% if f.departure_time %}<div class="tp-kv"><span>Departs</span><span>{{ f.departure_time }} → {{ f.arrival_time }}</span></div>{% endif %}
+      <div class="tp-kv"><span>Duration</span><span>~{{ f.scheduled_elapsed_time }} min</span></div>
+      {% if f.reference_only %}
+      <p style="margin-top:10px"><span class="tp-pill warn">Reference schedule — not modelled</span></p>
+      {% else %}
+      <p style="margin-top:10px"><span class="tp-pill risk-{{ f.risk_label|lower }}">{{ f.risk_label }} · {{ (f.delay_probability*100)|round(1) }}%</span></p>
+      {% endif %}
+      {% if f.booking %}
+      <div class="tp-attraction-actions">
+        <span class="tp-mini-btn tp-mini-btn-primary" onclick="tpOpenBooking('{{ (carrier_name(f.carrier) ~ (' ' ~ f.flight_number if f.flight_number else ''))|e }}', '{{ f.booking[0].url|e }}', '{{ f.booking[0].name|e }}')">🔗 Book on {{ f.booking[0].name }}</span>
+      </div>
+      {% if f.booking[1:] %}
+      <p class="muted" style="font-size:11.5px;margin-top:6px">Also on:
+        {% for alt in f.booking[1:] %}<a href="{{ alt.url }}" target="_blank" rel="noopener">{{ alt.name }}</a>{{ ', ' if not loop.last }}{% endfor %}</p>
+      {% endif %}
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  <p class="dataset-note" style="margin-top:10px">{% if real_price %}The real price above is today's market rate for this route (Google Flights) — it isn't tied to any single historical flight card below, which carry schedule and delay-risk only.{% else %}No real fare data available for this route right now — schedule and delay-risk only.{% endif %}
+    "Book" links go to the real airline/route search on each site (ixigo, MakeMyTrip, Goibibo) — not a price or a reservation made by SmartRouteAI.</p>
+</section>
+{% endif %}
+{% endfor %}
+{% endif %}
+
+<!-- ============================== HOTEL COMPARISON ============================== -->
+<section class="tp-section">
+  <div class="tp-section-head"><h2>🏨 Stay</h2><span class="tp-sub">{{ plan.nights }} night{{ 's' if plan.nights != 1 }}</span></div>
+  {% if plan.hotel_options %}
+  <div class="tp-overview-grid">
+    {% for h in plan.hotel_options[:3] %}
+    <div class="tp-card">
+      {% if loop.first %}<span class="tp-pill tag-best">Best match for your budget</span>{% endif %}
+      <h3 style="margin-top:8px">{{ h.median_nightly_rate_usd | money }}/night</h3>
+      <div class="tp-kv"><span>Total</span><span>{{ (h.median_nightly_rate_usd * plan.nights) | money }}</span></div>
+      <div class="tp-kv"><span>Reliability</span><span>{{ h.reliability_pct }}%</span></div>
+      <p class="muted" style="font-size:11.5px;margin-top:8px">Real historical pricing tier — no property name in this dataset.</p>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="tp-card"><p class="muted">No hotel tier matched this budget — try increasing it.</p></div>
+  {% endif %}
+
+  {% if plan.real_priced_hotels %}
+  <div class="tp-section-head" style="margin-top:22px">
+    <h2 style="font-size:16px">Real hotels, real prices <span class="muted">(Google Hotels, for your real dates)</span></h2>
+  </div>
+  <div class="tp-attraction-grid">
+    {% for h in plan.real_priced_hotels | sort(attribute='nightly_rate_usd') %}
+    <div class="tp-card tp-attraction-card" style="padding:0;overflow:hidden">
+      {% if h.thumbnail %}<img src="{{ h.thumbnail }}" alt="{{ h.name }}" style="width:100%;height:120px;object-fit:cover;display:block">{% endif %}
+      <div style="padding:14px">
+        {% if loop.first %}<span class="tp-pill tag-best">Cheapest real option</span>{% endif %}
+        <h4 style="margin-top:6px">{{ h.name }}</h4>
+        <div class="tp-kv"><span>Rate</span><span>{{ h.nightly_rate_usd | money }}/night</span></div>
+        {% if h.total_rate_usd %}<div class="tp-kv"><span>Total</span><span>{{ h.total_rate_usd | money }}</span></div>{% endif %}
+        {% if h.rating %}<div class="tp-kv"><span>Rating</span><span>⭐ {{ h.rating }}{% if h.reviews %} ({{ h.reviews }}){% endif %}</span></div>{% endif %}
+        {% if h.hotel_class %}<p class="muted" style="font-size:11.5px;margin-top:6px">{{ h.hotel_class }}{% if h.amenities %} · {{ h.amenities | join(', ') }}{% endif %}</p>{% endif %}
+        {% if h.link %}
+        <div class="tp-attraction-actions">
+          <span class="tp-mini-btn tp-mini-btn-primary" onclick="tpOpenBooking('{{ h.name|e }}', '{{ h.link|e }}', 'Google Hotels')">🔗 Book</span>
+          {% if h.lat and h.lon %}<span class="tp-mini-btn" onclick="tpFlyTo({{ h.lat }},{{ h.lon }})">📍 Map</span>{% endif %}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="dataset-note" style="margin-top:8px">Real Google Hotels results for your actual check-in/check-out dates — price, rating and photo are all real, not estimated.</p>
+  {% elif plan.suggested_hotels %}
+  <div class="tp-section-head" style="margin-top:22px">
+    <h2 style="font-size:16px">Pick a real hotel {% if plan.hotel_source != 'real' %}<span class="muted">(AI-suggested, unverified)</span>{% endif %}</h2>
+  </div>
+  <div class="tp-attraction-grid">
+    {% for h in plan.suggested_hotels %}
+    <div class="tp-card tp-attraction-card">
+      <h4>{{ h.name }}</h4>
+      <div class="tp-area">{{ h.address or h.area }}</div>
+      <p class="muted" style="font-size:12px">{{ h.note }}</p>
+      <div class="tp-attraction-actions">
+        {% if h.website %}
+        <span class="tp-mini-btn" onclick="tpOpenBooking('{{ h.name|e }}', '{{ h.website|e }}', 'the hotel\'s website')">🔗 Book hotel</span>
+        {% endif %}
+        {% if h.map_url %}
+        <a class="tp-mini-btn" href="{{ h.map_url }}" target="_blank" rel="noopener">View map</a>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+
+<!-- ============================== MUST-VISIT + HIDDEN GEMS ============================== -->
+{% if plan.sightseeing_common or plan.sightseeing_hidden %}
+<section class="tp-section">
+  <div class="tp-section-head"><h2>⭐ Must-visit places</h2><span class="tp-sub">Real places (Geoapify) — "well-known" means it has a real Wikipedia/Wikidata entry</span></div>
+  <div class="tp-attraction-grid" id="tp-common-spots">
+    {% for s in plan.sightseeing_common %}
+    <div class="tp-card tp-attraction-card" data-category="{{ s.note }}">
+      <span class="tp-cat-badge">{{ s.note }}</span>
+      <h4>{{ s.name }}</h4>
+      <div class="tp-area">{{ s.area }}</div>
+      <div class="tp-attraction-actions">
+        <span class="tp-mini-btn tp-add-btn" onclick="tpToggleItinerary(this, '{{ s.name|e }}')">+ Add</span>
+        {% if s.lat and s.lon %}<span class="tp-mini-btn" onclick="tpFlyTo({{ s.lat }},{{ s.lon }})">📍 Map</span>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if plan.sightseeing_hidden %}
+  <div class="tp-section-head" style="margin-top:26px"><h2>💎 Hidden gems</h2><span class="tp-sub">Real places without a Wikipedia entry — genuinely less touristy</span></div>
+  <div class="tp-attraction-grid" id="tp-hidden-spots">
+    {% for s in plan.sightseeing_hidden[:12] %}
+    <div class="tp-card tp-attraction-card" data-category="{{ s.note }}">
+      <span class="tp-cat-badge">{{ s.note }}</span>
+      <h4>{{ s.name }}</h4>
+      <div class="tp-area">{{ s.area }}</div>
+      <div class="tp-attraction-actions">
+        <span class="tp-mini-btn tp-add-btn" onclick="tpToggleItinerary(this, '{{ s.name|e }}')">+ Add</span>
+        {% if s.lat and s.lon %}<span class="tp-mini-btn" onclick="tpFlyTo({{ s.lat }},{{ s.lon }})">📍 Map</span>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+
+<!-- ============================== MAP ============================== -->
+<section class="tp-section">
+  <div class="tp-section-head"><h2>🗺 Map</h2><span class="tp-sub">Real coordinates — hotel, attractions and hidden gems</span></div>
+  <div class="tp-card" style="padding:8px">
+    <div id="tp-map"></div>
+  </div>
+</section>
+{% endif %}
+
+<!-- ============================== ITINERARY ============================== -->
+{% if plan.day_plan %}
+<section class="tp-section">
+  <div class="tp-section-head"><h2>📅 Day-by-day plan</h2>
+    <span class="tp-sub">Daily food {{ plan.daily_food_budget_usd | money }} · daily transport {{ plan.daily_transport_budget_usd | money }}</span></div>
+  <div class="tp-day-grid">
+    {% for d in plan.day_plan %}
+    <div class="tp-card tp-day-card">
+      <div class="tp-day-num">Day {{ d.day }}</div>
+      <ul>
+        <li><b>Morning</b>{{ d.morning }}</li>
+        <li><b>Afternoon</b>{{ d.afternoon }}</li>
+        <li><b>Evening</b>{{ d.evening }}</li>
+      </ul>
+      {% if d.food_pick %}<p class="muted" style="font-size:12px;margin-top:8px">{{ d.food_pick.note }}</p>{% endif %}
+      <span class="tp-day-spend">~{{ d.suggested_spend_usd | money }} sightseeing</span>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<!-- ============================== BUDGET BREAKDOWN ============================== -->
+<section class="tp-section">
+  <div class="tp-section-head"><h2>💰 Budget breakdown</h2></div>
+  <div class="tp-card">
+    {% for cat in ['flight_cost','hotel_cost','food_cost','transport_cost','sightseeing_cost'] %}
+    <div class="tp-budget-row">
+      <span class="tp-budget-label">{{ cat.replace('_cost','')|capitalize }}</span>
+      <div class="tp-budget-track"><div class="tp-budget-fill" style="width: {{ (plan.budget_breakdown[cat] / plan.budget_breakdown.total * 100) | round(1) }}%"></div></div>
+      <span class="tp-budget-amt">{{ plan.budget_breakdown[cat] | money }}</span>
+    </div>
+    {% endfor %}
+    <div class="tp-kv" style="margin-top:10px;border-top:1px solid var(--tp-border);padding-top:10px">
+      <span>Total</span><span><strong>{{ plan.budget_breakdown.total | money }}</strong> · {{ plan.nights }} night(s)
+        {%- if plan.travelers and plan.travelers > 1 %} · {{ plan.travelers }} travellers in {{ plan.rooms }} room{{ 's' if plan.rooms != 1 else '' }}{% endif %}</span>
+    </div>
+    {% if not plan.optimizer_feasible %}
+    <div class="tp-budget-warn">⚠️ Your current itinerary exceeds your budget by {{ plan.optimizer_shortfall_usd | money }}.
+      Try raising the budget, trimming trip length, or a lower comfort tier.</div>
+    {% endif %}
+  </div>
+</section>
+
+<!-- ============================== BOOKING MODAL (flights + hotels share this) ============================== -->
+<div class="tp-modal-backdrop" id="tp-booking-modal">
+  <div class="tp-card tp-modal">
+    <h3>You're leaving Trip Planner</h3>
+    <p>You're being redirected to <span id="tp-modal-provider">the booking provider</span> to complete your reservation.
+      SmartRouteAI doesn't process payments or hold reservations itself.</p>
+    <div class="tp-modal-target">
+      Selected: <strong id="tp-modal-item-name"></strong>
+    </div>
+    <div class="tp-modal-actions">
+      <button class="tp-btn tp-btn-ghost" onclick="tpCloseBooking()">Cancel</button>
+      <a class="tp-btn" id="tp-modal-continue" target="_blank" rel="noopener" onclick="tpCloseBooking()">Continue to booking</a>
+    </div>
+  </div>
+</div>
+
+{% endif %}{# end: if plan #}
+
 {% endblock %}
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/place-autocomplete.js') }}"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script>
+(function(){
+  // ---- loading overlay: shown on real form submit, until the new page replaces it ----
+  var form = document.getElementById('tp-form');
+  if (form) {
+    form.addEventListener('submit', function(){
+      if (form.querySelector('[name="stage"]').value !== 'plan') return; // only the real "build my trip" step
+      var overlay = document.getElementById('tp-loading');
+      overlay.classList.add('active');
+      var steps = overlay.querySelectorAll('.tp-load-step');
+      var i = 0;
+      var tick = setInterval(function(){
+        if (i < steps.length) { steps[i].classList.add('on'); i++; }
+        else clearInterval(tick);
+      }, 450);
+    });
+  }
+
+  // ---- interest chips: client-side filter over the REAL rendered spot cards ----
+  var chipRow = document.getElementById('tp-interest-chips');
+  var INTEREST_TO_CATEGORY = {
+    'Sightseeing': ['Sight','Attraction','Monument','Memorial','Castle','Fort','Public artwork'],
+    'Culture': ['Museum','Monument','Memorial','Public artwork'],
+    'History': ['Monument','Memorial','Historic ruins','Fort','Castle'],
+    'Food': [], 'Adventure': [], 'Shopping': [], 'Nightlife': [], 'Nature': []
+  };
+  function applyInterestFilter(){
+    if (!chipRow) return;
+    var checked = Array.prototype.slice.call(chipRow.querySelectorAll('input:checked')).map(function(c){ return c.value; });
+    var cards = document.querySelectorAll('.tp-attraction-card[data-category]');
+    if (checked.length === 0) { cards.forEach(function(c){ c.hidden = false; }); return; }
+    var wantedCats = [];
+    checked.forEach(function(tag){ wantedCats = wantedCats.concat(INTEREST_TO_CATEGORY[tag] || []); });
+    cards.forEach(function(c){
+      c.hidden = wantedCats.length > 0 && wantedCats.indexOf(c.dataset.category) === -1;
+    });
+  }
+  if (chipRow) chipRow.addEventListener('change', applyInterestFilter);
+  applyInterestFilter();
+
+  // ---- "add to itinerary" — real client-side convenience, stored for this session only ----
+  window.tpToggleItinerary = function(el, name){
+    el.classList.toggle('on');
+    el.textContent = el.classList.contains('on') ? '✓ Added' : '+ Add';
+    try {
+      var key = 'tp_itinerary_adds';
+      var list = JSON.parse(sessionStorage.getItem(key) || '[]');
+      if (el.classList.contains('on')) { if (list.indexOf(name) === -1) list.push(name); }
+      else { list = list.filter(function(n){ return n !== name; }); }
+      sessionStorage.setItem(key, JSON.stringify(list));
+    } catch (e) {}
+  };
+
+  // ---- booking redirect confirmation - shared by flight (booking.py's real
+  // ixigo/MakeMyTrip/Goibibo deep links) and hotel (real Foursquare website) buttons ----
+  window.tpOpenBooking = function(name, url, providerLabel){
+    document.getElementById('tp-modal-item-name').textContent = name;
+    document.getElementById('tp-modal-provider').textContent = providerLabel || 'the booking provider';
+    document.getElementById('tp-modal-continue').href = url;
+    document.getElementById('tp-booking-modal').classList.add('active');
+  };
+  window.tpCloseBooking = function(){
+    document.getElementById('tp-booking-modal').classList.remove('active');
+  };
+  document.getElementById('tp-booking-modal') && document.getElementById('tp-booking-modal').addEventListener('click', function(e){
+    if (e.target === this) tpCloseBooking();
+  });
+
+  // ---- map: real coordinates only, nothing plotted without a real lat/lon ----
+  var mapEl = document.getElementById('tp-map');
+  if (mapEl && window.L) {
+    var points = [];
+    document.querySelectorAll('#tp-common-spots .tp-attraction-card, #tp-hidden-spots .tp-attraction-card').forEach(function(card, idx){
+      var btn = card.querySelector('[onclick^="tpFlyTo"]');
+      if (!btn) return;
+      var m = btn.getAttribute('onclick').match(/tpFlyTo\(([-\d.]+),([-\d.]+)\)/);
+      if (!m) return;
+      points.push({lat: parseFloat(m[1]), lon: parseFloat(m[2]),
+                   name: card.querySelector('h4').textContent,
+                   cat: card.querySelector('.tp-cat-badge').textContent,
+                   hidden: card.closest('#tp-hidden-spots') !== null});
+    });
+    if (points.length) {
+      var map = L.map('tp-map');
+      // Esri's dark canvas, not CARTO - CARTO's free dark tiles now gate behind an
+      // API key and show "API KEY REQUIRED" (see static/js/flight_map.js, which hit
+      // this first). Esri numbers tiles {z}/{y}/{x} - NOT Leaflet's {z}/{x}/{y} - get
+      // that backwards and it silently renders the wrong hemisphere, mostly ocean.
+      L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/' +
+        'World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+          attribution: 'Basemap &copy; <a href="https://www.esri.com">Esri</a>',
+          maxZoom: 16,
+        }).addTo(map);
+      var bounds = [];
+      points.forEach(function(p){
+        var color = p.hidden ? '#818CF8' : '#5EEAD4';
+        var marker = L.circleMarker([p.lat, p.lon], {radius: 8, color: color, fillColor: color, fillOpacity: 0.85, weight: 2}).addTo(map);
+        marker.bindPopup('<div class="tp-popup"><b>' + p.name + '</b><span class="tp-popup-sub">' + p.cat + '</span></div>');
+        bounds.push([p.lat, p.lon]);
+      });
+      map.fitBounds(bounds, {padding: [30,30]});
+      window.tpFlyTo = function(lat, lon){ map.flyTo([lat, lon], 15); };
+    } else {
+      mapEl.innerHTML = '<p class="muted" style="padding:20px">No coordinates available for this destination\'s spots.</p>';
+    }
+  }
+})();
+</script>
 {% endblock %}

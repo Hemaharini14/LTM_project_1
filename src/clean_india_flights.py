@@ -79,6 +79,8 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
         "origin_pressure": pd.to_numeric(df["weather__hourly__pressure"], errors="coerce") * HPA_TO_INHG,
         "origin_visibility": pd.to_numeric(df["weather__hourly__visibility"], errors="coerce") * KM_TO_MILES,
         "origin_wind_speed": pd.to_numeric(df["weather__hourly__windspeedKmph"], errors="coerce") * KMPH_TO_MPH,
+        # Real reported route distance - this source has it directly (in km).
+        "distance_miles": pd.to_numeric(df["Distance"], errors="coerce") * KM_TO_MILES,
     })
     out = out.dropna(subset=["carrier_code"])
 

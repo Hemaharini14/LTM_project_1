@@ -22,22 +22,34 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score, accuracy_score, classification_report
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from model_preprocessing import FlightWeatherEncoder, load_clean_flight_weather, CONT_COLS, TARGET_COL
+from model_preprocessing import (FlightWeatherEncoder, load_clean_flight_weather, chronological_split,
+                                 CONT_COLS, TARGET_COL)
 from delay_model_v2 import DelayNetV2
 from config import UNIFIED_FLIGHT_WEATHER_CLEAN_PATH, OUTPUT_DIR
 
-ARTIFACT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "models", "artifacts")
+# DELAY_DATA_PATH / DELAY_ARTIFACT_DIR let a candidate model (e.g. the BTS one,
+# see build_bts_dataset.py) train and evaluate beside the live one without
+# touching it. Unset, both point at the live model as before.
+ARTIFACT_DIR = os.environ.get("DELAY_ARTIFACT_DIR") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "models", "artifacts")
+DATA_PATH = os.environ.get("DELAY_DATA_PATH") or UNIFIED_FLIGHT_WEATHER_CLEAN_PATH
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Reduce this (e.g. 0.15) for a quick smoke-test run before committing to
 # the full ~5M-row training pass.
 SAMPLE_FRAC = 1.0
 
+# "chronological" (default) validates on the most recent slice of the data -
+# see chronological_split's docstring. "random" reproduces the original
+# stratified split, kept only so a candidate model can be compared
+# apples-to-apples against one trained the old way.
+SPLIT_STRATEGY = os.environ.get("DELAY_SPLIT_STRATEGY", "chronological")
+
 
 def main(epochs: int = 8, batch_size: int = 4096, lr: float = 1e-3):
     print(f"Device: {DEVICE}")
     print("Loading cleaned flight+weather data...")
-    df = load_clean_flight_weather(UNIFIED_FLIGHT_WEATHER_CLEAN_PATH)
+    df = load_clean_flight_weather(DATA_PATH)
     print(f"Loaded {len(df):,} rows")
 
     # route_frequency isn't a raw column - the encoder derives it from "route"
@@ -52,9 +64,17 @@ def main(epochs: int = 8, batch_size: int = 4096, lr: float = 1e-3):
         df = df.sample(frac=SAMPLE_FRAC, random_state=42)
         print(f"SAMPLE_FRAC={SAMPLE_FRAC} -> using {len(df):,} rows for this run")
 
-    train_df, val_df = train_test_split(df, test_size=0.15, random_state=42, stratify=df[TARGET_COL])
-    print(f"Train: {len(train_df):,} | Val: {len(val_df):,}")
-    print(f"Train delay rate: {train_df[TARGET_COL].mean():.3f}")
+    # Chronological, not random: every validation row is later than every
+    # training row, so held-out performance can't be inflated by same-day
+    # weather/congestion leaking across the split - see chronological_split's
+    # own docstring. SPLIT_STRATEGY lets a caller (or env var) opt back into
+    # the original random split for direct before/after comparison.
+    if SPLIT_STRATEGY == "chronological":
+        train_df, val_df = chronological_split(df, test_size=0.15)
+    else:
+        train_df, val_df = train_test_split(df, test_size=0.15, random_state=42, stratify=df[TARGET_COL])
+    print(f"Split: {SPLIT_STRATEGY} | Train: {len(train_df):,} | Val: {len(val_df):,}")
+    print(f"Train delay rate: {train_df[TARGET_COL].mean():.3f} | Val delay rate: {val_df[TARGET_COL].mean():.3f}")
 
     encoder = FlightWeatherEncoder().fit(train_df)
     vocab_sizes = encoder.vocab_sizes()
@@ -162,6 +182,12 @@ def main(epochs: int = 8, batch_size: int = 4096, lr: float = 1e-3):
         "vocab_sizes": vocab_sizes,
         "n_continuous": len(CONT_COLS),
         "recommended_threshold": best_threshold,
+        # Recorded so evaluate_delay_model_v2.py can reconstruct the SAME split
+        # this exact checkpoint was actually trained on, rather than trusting
+        # whatever DELAY_SPLIT_STRATEGY happens to be set (or defaulted) to at
+        # evaluation time - those can silently disagree, which means "held-out"
+        # rows that were really in training, with no error to catch it.
+        "split_strategy": SPLIT_STRATEGY,
     }, os.path.join(ARTIFACT_DIR, "delay_model_v2.pt"))
     print(f"\nSaved model + encoder to {ARTIFACT_DIR}")
 

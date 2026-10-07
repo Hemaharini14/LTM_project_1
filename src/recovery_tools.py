@@ -16,6 +16,7 @@ import numpy as np
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from config import HOTELS_CLEAN_PATH, UNIFIED_FLIGHT_WEATHER_CLEAN_PATH, WEATHER_CLEAN_PATH, OUTPUT_DIR
 from predict_delay_v2 import predict_delay_probability, risk_label
+from weatherapi_live import live_weather
 
 _FLIGHTS_DF = None
 _HOTELS_DF = None
@@ -98,8 +99,16 @@ def is_route_covered(origin_airport: str, destination_airport: str) -> bool:
     if o in airports and d in airports:
         return True
     try:
-        from india_delay_model import covers
-        return covers(o, d, "")
+        from india_delay_model import INDIA_AIRPORTS
+        # india_delay_model.covers() is permissive by design (o-in-India OR
+        # d-in-India OR carrier-is-Indian) for its real job: picking which
+        # backend scores a flight that's already known to need the India model.
+        # Reused as-is here, it wrongly marked DEL->SIN "covered" just because
+        # DEL is a real India airport - any India departure to anywhere on Earth
+        # passed. This function answers a different question - "does a real
+        # prediction exist for this route at all" - so both ends must be real
+        # India domestic airports, not just one.
+        return o in INDIA_AIRPORTS and d in INDIA_AIRPORTS
     except Exception:
         return False
 
@@ -214,6 +223,19 @@ def search_alternative_flights(origin_airport: str, destination_airport: str,
             # historical record - see predict_delay_probability's docstring.
             scheduled_hour=int(row["scheduled_hour"]), is_holiday=bool(row["is_holiday"]),
             origin_hourly_congestion=row["origin_hourly_congestion"],
+            # Same real historical record also carries arrival-airport weather -
+            # None (not a guess) when this particular row never had it (e.g. an
+            # India row), same meaning as origin_temp_known above.
+            dest_weather=({"temp_f": row["dest_temp_f"], "precip_in": row["dest_precip_in"],
+                           "pressure": row["dest_pressure"], "visibility": row["dest_visibility"],
+                           "wind_speed": row["dest_wind_speed"]}
+                          if bool(row.get("dest_weather_known", 0)) else None),
+            # Real per-row distance from the catalogue (build_unified_flight_dataset.py
+            # computes it from real airport coordinates for any row that didn't already
+            # report one) - .get() stays defensive against a stale cached catalogue
+            # file from before this column existed, where it falls back to
+            # predict_delay_probability's own real coordinate lookup instead.
+            distance_miles=row.get("distance_miles"),
         )
         fn = row.get("flight_number", "")
         options.append({
@@ -292,7 +314,17 @@ def search_hotel_options(nightly_budget: float, priority: str = "cost", top_n: i
 
 
 def get_destination_weather(location_name: str) -> dict | None:
-    """Looks up the latest live conditions for a destination, if available."""
+    """Real current conditions for a destination - a genuinely live call
+    (WeatherAPI.com) first, falling back to GlobalWeatherRepository.csv (a
+    one-time downloaded snapshot that only gets staler - see clean_weather.py)
+    only if the key is missing or the call fails, so this never goes from
+    "a real but possibly stale reading" to nothing at all."""
+    if not location_name:
+        return None
+    live = live_weather(location_name)
+    if live:
+        return live
+
     df = _load_weather()
     match = df[df["location_name"].str.lower() == location_name.lower()]
     if match.empty:

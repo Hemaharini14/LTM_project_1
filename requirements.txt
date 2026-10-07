@@ -19,3 +19,4 @@ truststore
 markdown
 bleach
 httpx
+gunicorn

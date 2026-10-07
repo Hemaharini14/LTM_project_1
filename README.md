@@ -21,6 +21,19 @@ flight/Scripts/activate          # the venv this project uses (Windows)
 python api.py                    # http://127.0.0.1:5000
 ```
 
+Or in a container (`Dockerfile`, production entry point is `gunicorn`, not the
+Flask dev server above):
+
+```bash
+docker build -t smartrouteai .
+docker run -p 5000:5000 --env-file .env smartrouteai
+```
+
+Model artifacts, datasets and the database are gitignored and NOT baked into
+the image — mount them as a volume, or run the training scripts once inside
+the running container. `GET /health` reports whether the delay model and
+database actually loaded, for a process manager or orchestrator to probe.
+
 Flask serves everything on one port — the API, the product pages and both
 frontends. There is no separate frontend server.
 
@@ -32,6 +45,7 @@ frontends. There is no separate frontend server.
 | `/budget-trip` | Full planner — transport, hotels, sightseeing, itinerary |
 | `/plan` | Vanilla-JS trip planner UI over `POST /api/plan-trip` |
 | `/admin` | Model accuracy, calibration, predicted-vs-actual samples |
+| `/health` | Liveness/readiness check — model + database status, no login |
 
 > **First request is slow.** Loading the 5.4M-row flight dataset and the
 > transport tables takes about 90 seconds on a cold start. A background thread
@@ -106,7 +120,12 @@ thing holding it up.
 ## The delay model
 
 A PyTorch binary classifier (`DelayNetV2`) predicting whether a flight departs
-**15+ minutes late**, trained on a unified US flight-and-weather dataset.
+**15+ minutes late**, trained on US BTS "Reporting Carrier On-Time Performance"
+flights (2025) with real weather at **both** the departure and arrival airport,
+joined from Open-Meteo at the scheduled time of each — see
+[`src/build_bts_dataset.py`](src/build_bts_dataset.py). This replaced an earlier
+version trained on 2019 US flights with origin weather only; that version and
+its numbers are kept in `models/artifacts_pre_bts/` for comparison.
 
 Raw scores are not probabilities — training used `pos_weight` to handle class
 imbalance, which inflates them — so an **isotonic regression calibrator** is
@@ -121,17 +140,41 @@ There are **two models**, and which one scores a flight depends on the route.
 
 ### DelayNetV2 — US and international routes
 
-The headline held-out number is **AUC 0.873**, but it splits sharply by whether
-the inbound aircraft's delay is known, and serving almost never knows it:
+The held-out number is **AUC 0.873**, but it splits sharply by whether the
+inbound aircraft's delay is known, and serving almost never knows it:
 
 | Held-out subgroup | AUC | n | Actual delay rate |
 |---|---|---|---|
-| `prior_leg_known` | 0.896 | 629,814 | 20.5% |
-| `prior_leg_unknown` — **what serving sends** | **0.713** | 185,704 | 10.6% |
+| `prior_leg_known` | 0.897 | 772,472 | 24.2% |
+| `prior_leg_unknown` — **what serving sends** | **0.717** | 261,046 | 11.6% |
+
+Held-out data still rewards a model for fitting its own training period, so
+the number that actually matters is the **out-of-time test**: trained on 2025
+flights only, scored against **4,014,657 real BTS flights from Jan–Jul 2026**
+that didn't exist yet when training happened —
+[`src/compare_delay_models.py`](src/compare_delay_models.py).
+
+| Model | AUC, all flights | AUC, checked in advance |
+|---|---|---|
+| Previous model (2019 data, origin weather only, as it used to serve) | 0.773 | 0.656 |
+| Previous model, given arrival weather too | 0.833 | 0.686 |
+| **Current model (BTS 2025, both ends)** | **0.861** | **0.701** |
+
+Most of that gain is arrival weather itself (0.773 → 0.833); training on more
+recent data adds the rest (0.833 → 0.861). The earlier version of this project
+measured destination weather on 139 real but unrepresentative outcomes and
+found it hurt (0.713 → 0.603), so it was deliberately withheld from serving.
+Re-measured on 4 million real out-of-time flights, that conclusion doesn't
+hold — withholding it was a real cost, not a safeguard — so both the web form
+and the recovery agent now fetch a forecast for the destination airport at the
+scheduled arrival time (never the actual one, which would leak the outcome)
+and pass it through. The calibrated scale tracks reality closely on this test:
+flights predicted 30–40% risk were actually late 34.2% of the time; flights
+predicted 65%+ were actually late 92.9% of the time.
 
 ### The India model — why it had to exist
 
-DelayNetV2 saw 10,634 Indian rows out of 5.4M (**0.20%**), across four airports,
+DelayNetV2 saw 10,634 Indian rows out of 6.89M (**0.15%**), across four airports,
 with Chennai absent entirely. Worse, the features it weights most are
 *constants* on every Indian row:
 
@@ -178,22 +221,18 @@ departure is 9 minutes late. The model reports the chance of crossing **15**
 minutes, so "likely to be late" and "a flight you would call on time" are both
 true at once.
 
-### Why destination weather is deliberately not used
+### Two different datasets, two different jobs
 
-Measured, not assumed. Against those same 139 outcomes:
-
-```
-neither weather source       AUC 0.713
-origin weather only          AUC 0.722   ← used
-destination weather only     AUC 0.603
-both                         AUC 0.608
-```
-
-When destination weather is absent, the encoder substitutes its own training
-mean, which scales to exactly zero — *no signal*. Supplying real Indian
-conditions instead gives the model values it reads through US-learned weights,
-which is worse than silence. So origin weather fills automatically and
-destination weather is not passed to the model.
+The model's weights come from the BTS 2025 training set above. The **live
+catalogue of real historical flights** that recovery/alternatives/chatbot
+search over — real carriers, flight numbers, scheduled times — is a separate
+file, still the original 2019 US + India dataset
+(`outputs/cleaned_flight_weather_unified.csv`, the "5.4M-row flight dataset"
+loaded at cold start). Each of those rows also carries its own real origin
+*and* destination weather, which is now passed to the model too
+([`src/recovery_tools.py`](src/recovery_tools.py)) — it was already in the
+file, just not used. Moving that catalogue itself to BTS 2025 is a larger,
+separate change not yet made.
 
 ---
 
@@ -320,9 +359,13 @@ python src/check_model.py       # model vs real collected outcomes
 ## Rebuilding generated assets
 
 ```bash
+python src/build_bts_dataset.py             # download BTS + weather, build training set
+python src/build_bts_dataset.py --test 2026 # out-of-time test set, for comparison only
+python src/train_delay_model_v2.py          # trains DelayNetV2 (DELAY_ARTIFACT_DIR to avoid overwriting live)
+python src/evaluate_delay_model_v2.py       # metrics + probability calibrator
+python src/compare_delay_models.py          # compares all artifact dirs against the out-of-time test
 python src/train_india_model.py             # India delay model (AUC 0.594 -> 0.723)
 python src/build_delay_duration_lookup.py   # delay duration + cause lookup
-python src/evaluate_delay_model_v2.py       # metrics + probability calibrator
 python src/build_catalog.py DEL BOM --write # real schedules into the catalogue
 cd web && npm install && npm run build      # 3D showcase → static/showcase/
 ```
@@ -359,8 +402,9 @@ httpx puts the failing URL — key included — into its error messages.
 Worth knowing before trusting a number:
 
 - **Two models, and the Indian one is young.** DelayNetV2 covers US and
-  international routes on 5.4M rows; Indian routes go to a model trained on
-  10,988. It ranks far better than DelayNetV2 did there (0.723 against 0.594)
+  international routes, trained on 6.89M BTS 2025 rows; Indian routes go to a
+  model trained on 10,988. It ranks far better than DelayNetV2 did there
+  (0.723 against 0.594)
   but under-predicts, especially at the low end. Read the ordering, not the
   level.
 - **Fares are never real.** See above.

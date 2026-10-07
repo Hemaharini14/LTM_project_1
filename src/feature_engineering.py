@@ -21,6 +21,15 @@ US_FEDERAL_HOLIDAYS_2019 = {
     "2019-11-28",  # Thanksgiving Day
     "2019-12-25",  # Christmas Day
 }
+# For the BTS training years (build_bts_dataset.py) and for dates checked in the
+# app today - without these, is_holiday was 0 on every 2025/2026 flight.
+US_FEDERAL_HOLIDAYS_2025_2026 = {
+    "2025-01-01", "2025-01-20", "2025-02-17", "2025-05-26", "2025-06-19", "2025-07-04",
+    "2025-09-01", "2025-10-13", "2025-11-11", "2025-11-27", "2025-12-25",
+    "2026-01-01", "2026-01-19", "2026-02-16", "2026-05-25", "2026-06-19",
+    "2026-07-03",  # Independence Day observed (Jul 4 is a Saturday)
+    "2026-07-04", "2026-09-07", "2026-10-12", "2026-11-11", "2026-11-26", "2026-12-25",
+}
 # Covers the India data's real date range (Jan 2019 - Jan 2020).
 INDIA_NATIONAL_HOLIDAYS = {
     "2019-01-01",  # New Year's Day
@@ -32,7 +41,7 @@ INDIA_NATIONAL_HOLIDAYS = {
     "2020-01-01",  # New Year's Day
     "2020-01-26",  # Republic Day
 }
-ALL_HOLIDAYS = US_FEDERAL_HOLIDAYS_2019 | INDIA_NATIONAL_HOLIDAYS
+ALL_HOLIDAYS = US_FEDERAL_HOLIDAYS_2019 | US_FEDERAL_HOLIDAYS_2025_2026 | INDIA_NATIONAL_HOLIDAYS
 
 
 def is_holiday_date(date_str: str) -> bool:

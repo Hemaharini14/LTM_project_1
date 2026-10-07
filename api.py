@@ -11,6 +11,7 @@ Run from the project root:
     python api.py
 """
 import os
+import re
 import sys
 import json
 import threading
@@ -35,6 +36,7 @@ from opensky import (bbox_for_route, callsign_for, live_rotation, live_traffic,
 from aviationstack import flight_now
 from weather_live import airport_weather
 from booking import describe_party, links_for_flight
+from serpapi_prices import real_flight_price, real_hotel_prices
 from recovery_graph import build_graph
 from recovery_tools import get_dataset_index, is_route_covered, lookup_flight_by_number
 from trip_planner import plan_budget_trip
@@ -162,6 +164,41 @@ def _format_ts(iso_str: str) -> str:
         return datetime.fromisoformat(iso_str).strftime("%b %d, %Y · %I:%M %p UTC")
     except (ValueError, TypeError):
         return iso_str or ""
+
+
+# ---------------------------------------------------------------- health
+
+@app.route("/health")
+def health():
+    """Liveness/readiness probe for a process manager or container orchestrator -
+    no login, no page render, just real component checks. Each check is wrapped
+    separately so one failing dependency still reports which one, rather than a
+    bare 500. Deliberately does NOT call the live weather/flight APIs - those
+    have their own quotas and failure modes, and a health check spending them
+    would make the probe itself a cause of outages."""
+    checks = {}
+
+    try:
+        from predict_delay_v2 import predict_delay_probability
+        predict_delay_probability(
+            carrier_code="AA", origin_airport="JFK", destination_airport="LAX",
+            weekday=1, month=6, scheduled_elapsed_time=360,
+            origin_temp_f=70, origin_temp_known=True, origin_precip_in=0,
+            origin_pressure=29.9, origin_visibility=10, origin_wind_speed=8,
+        )
+        checks["delay_model"] = "ok"
+    except Exception as e:
+        checks["delay_model"] = f"error: {e}"
+
+    try:
+        import sqlite3
+        sqlite3.connect(db.DB_PATH, timeout=5).close()
+        checks["database"] = "ok"
+    except Exception as e:
+        checks["database"] = f"error: {e}"
+
+    healthy = all(v == "ok" for v in checks.values())
+    return checks, 200 if healthy else 503
 
 
 # ---------------------------------------------------------------- auth
@@ -414,15 +451,6 @@ def flight_delay():
             # placeholders on almost every check. A real forecast is free,
             # keyless and available 16 days out, so blank fields are filled
             # from it instead.
-            #
-            # ORIGIN ONLY, and that is measured rather than assumed. Against
-            # 139 real outcomes, origin weather moved AUC 0.713 -> 0.722 while
-            # DESTINATION weather moved it 0.713 -> 0.603. Supplying dest_*
-            # flips dest_weather_known from 0 to 1 and puts real values where
-            # the encoder was substituting its own training mean - which scales
-            # to exactly zero, i.e. "no signal". Silence beats a reading the
-            # model reads through US-learned weights, so destination weather is
-            # deliberately not passed to the model. See scripts in git history.
             if not inputs["origin_temp_known"]:
                 try:
                     forecast = airport_weather(
@@ -444,6 +472,26 @@ def flight_delay():
                         # thermometer - and setting it True here cost 0.611 -> 0.570.
                 except Exception as e:
                     print(f"[api] forecast lookup skipped: {e}")
+
+            # Destination weather, at the SCHEDULED arrival time - never the actual
+            # one, which would leak the outcome (a late flight lands later). This
+            # used to be withheld entirely: an earlier check against 139 real but
+            # unrepresentative outcomes showed it hurting (0.713 -> 0.603), so the
+            # model only ever saw dest_weather_known=0 in production and effectively
+            # never trained on that signal at serving time either. Re-measured
+            # properly on 4M real BTS flights the retrained model never trained on
+            # (see src/compare_delay_models.py), arrival weather helps more than
+            # departure weather does (0.773 -> 0.861 AUC with both ends supplied).
+            # None on any failure - the model falls back to its own training mean
+            # for dest_* with dest_weather_known=0, same as before, never a guess.
+            inputs["dest_weather"] = None
+            try:
+                dep_dt = datetime.strptime(f"{travel_date} {scheduled_hour:02d}:{scheduled_minute:02d}",
+                                           "%Y-%m-%d %H:%M")
+                arr_dt = dep_dt + timedelta(minutes=inputs["scheduled_elapsed_time"] or 0)
+                inputs["dest_weather"] = airport_weather(inputs["destination_airport"], arr_dt)
+            except Exception as e:
+                print(f"[api] destination forecast lookup skipped: {e}")
 
             # Live aircraft rotation: find the real aircraft due to fly this, see
             # where it has been today, and how much ground time is left before the
@@ -518,11 +566,28 @@ def flight_delay():
                     # None keeps the model on its prev_leg_known=0 path.
                     prev_leg_arrival_delay=(rotation.get("inferred_inbound_delay_min")
                                             if rotation and rotation.get("observed") else None),
+                    dest_weather=inputs["dest_weather"],
                 )
                 label = risk_label(prob)
                 result = {"probability": prob, "label": label, "inputs": inputs,
                           "lookup_note": lookup_note, "rotation": rotation,
                           "airline_estimate": airline_estimate}
+                # Real price + real scheduled departure/arrival clock time (Google
+                # Flights, via SerpApi) for this exact route/date - the SAME call
+                # already used on the Trip Planner and recovery pages, now here too
+                # since this is the highest-traffic page in the app. Quota note:
+                # SerpApi's free plan is 250 searches/month shared across this whole
+                # project; this adds one call per DISTINCT route+date checked (the
+                # 6h cache absorbs repeat checks of the same flight, which is most
+                # real usage during testing/a demo) - watch data/serpapi_usage.json
+                # if checks of many different routes start happening often.
+                try:
+                    result["real_price"] = real_flight_price(
+                        inputs["origin_airport"], inputs["destination_airport"],
+                        travel_date, adults=1)
+                except Exception as e:
+                    print(f"[api] real flight price skipped: {e}")
+                    result["real_price"] = None
                 # "How likely" comes from the trained model; "how long and why" is a
                 # real historical statistic for flights like this one that actually
                 # were delayed (delay_duration.py) - the classifier can't say either.
@@ -613,7 +678,10 @@ def flight_alternatives():
                  "committed": committed, "planned_spots": planned_spots,
                  "adults": adults, "children": children, "infants": infants,
                  "stay_name": request.form.get("stay_name", "").strip()}
-        travel_date = state.pop("travel_date", None)
+        # get(), not pop(): the recovery agent's own booking_link tool and the
+        # real-price lookup both read trip["travel_date"] too - popping it here
+        # silently left both with no date to search against.
+        travel_date = state.get("travel_date")
         outcome = _recovery_app.invoke(state)
         outcome["assumed_hotel_nights"] = ASSUMED_RECOVERY_HOTEL_NIGHTS
 
@@ -642,6 +710,10 @@ def budget_trip():
 
     if request.method == "POST":
         form_data = request.form.to_dict()
+        # to_dict() keeps only the LAST value of a repeated field - the interest
+        # checkboxes submit several "interests" values, so this needs getlist()
+        # or every box but the last would silently uncheck itself on re-render.
+        form_data["interests"] = request.form.getlist("interests")
         start_date_str = request.form.get("start_date") or date.today().isoformat()
         days = _int_field(request.form, "days", 5)
         start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
@@ -706,6 +778,50 @@ def budget_trip():
             transport_mode=inputs["transport_mode"],
             travelers=inputs["travelers"],
         )
+        # Real OTA search links for each flight option shown on the Trip Planner
+        # page - same builder the recovery agent already uses (booking.py), so
+        # "Book flight" on this page and on the recovery plan go through the
+        # identical real URL grammar. One real date per leg (outbound uses the
+        # real start date, return the real return date), real party size.
+        for leg_flights, leg_date in ((plan.get("outbound_flights"), inputs["start_date"]),
+                                      (plan.get("return_flights"), inputs["return_date"])):
+            for f in (leg_flights or []):
+                try:
+                    f["booking"] = links_for_flight(f, leg_date, adults=inputs["travelers"])
+                except Exception as e:
+                    print(f"[api] booking link skipped for {f.get('route')}: {e}")
+                    f["booking"] = []
+
+        # Real market prices (SerpApi -> Google Flights/Hotels) - the one real
+        # price source anywhere in this project. Quota-guarded (see
+        # serpapi_prices.py); None/[] when the key/quota/lookup isn't
+        # available, same as every other optional enrichment here, so the page
+        # falls back to its existing "no fare data" language rather than
+        # breaking when this is unavailable.
+        if plan.get("route_covered") or plan.get("route_reference"):
+            try:
+                plan["real_outbound_price"] = real_flight_price(
+                    inputs["origin_airport"], inputs["destination_airport"],
+                    inputs["start_date"], adults=inputs["travelers"])
+            except Exception as e:
+                print(f"[api] real flight price skipped: {e}")
+                plan["real_outbound_price"] = None
+            try:
+                plan["real_return_price"] = real_flight_price(
+                    inputs["destination_airport"], inputs["origin_airport"],
+                    inputs["return_date"], adults=inputs["travelers"])
+            except Exception as e:
+                print(f"[api] real return price skipped: {e}")
+                plan["real_return_price"] = None
+        try:
+            plan["real_priced_hotels"] = real_hotel_prices(
+                inputs["destination_city"] or inputs["destination_place"],
+                inputs["start_date"], inputs["return_date"],
+                adults=inputs["travelers"])
+        except Exception as e:
+            print(f"[api] real hotel prices skipped: {e}")
+            plan["real_priced_hotels"] = []
+
         plan["transport_mode"] = inputs["transport_mode"]
         # Real numbers for the mode actually chosen, so a traveller who picked the
         # car sees their drive rather than flights they never asked for.
@@ -855,6 +971,146 @@ def api_live_traffic():
         "your_callsign": mine,
         "count": len(aircraft),
     }
+
+
+@app.route("/api/delay-prediction")
+def api_delay_prediction():
+    """Pre-departure delay prediction as a plain JSON contract:
+    flight_number, date, origin, destination, scheduled_departure,
+    delay_probability, expected_delay_minutes, risk_severity, prediction_type.
+
+    GET /api/delay-prediction?flight_number=AA101&date=2026-10-10
+    GET /api/delay-prediction?carrier=AA&origin=JFK&destination=LAX&date=2026-10-10&departure_time=08:00
+
+    flight_number alone only resolves a route if that exact carrier+number
+    appears in the training catalogue (2019 US flights) - this project has no
+    live flight-number-to-route schedule lookup (that would need AviationStack,
+    which is quota-limited - see booking.py/aviationstack.py elsewhere in the
+    app). Pass origin/destination explicitly for anything else; the response
+    says which path was used.
+
+    risk_severity is this app's own real, calibration-checked three tiers
+    (LOW/MODERATE/HIGH - see predict_delay_v2.risk_label), not an arbitrary
+    four-way percentage split - a fourth "VERY HIGH" cutoff would be a number
+    nobody measured, so none is offered here. expected_delay_minutes is 0 for
+    LOW (a delay is unlikely enough that there's nothing real to plan around);
+    for MODERATE/HIGH it's the real median minutes among flights like this one
+    that WERE actually delayed (delay_duration.py) - a conditional statistic,
+    not a promise about this specific flight.
+    """
+    flight_number_raw = (request.args.get("flight_number") or "").strip().upper()
+    carrier_code = (request.args.get("carrier") or "").strip().upper()
+    flight_number = ""
+    if flight_number_raw:
+        m = re.match(r"^([A-Z]{2,3})(\d+)$", flight_number_raw)
+        if m:
+            carrier_code = carrier_code or m.group(1)
+            flight_number = m.group(2)
+        else:
+            flight_number = flight_number_raw
+
+    date_str = (request.args.get("date") or "").strip()
+    try:
+        travel_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        return {"error": "date is required, as YYYY-MM-DD"}, 422
+
+    departure_time = (request.args.get("departure_time") or "12:00").strip()
+    try:
+        dep_hour, dep_minute = (int(x) for x in departure_time.split(":")[:2])
+    except ValueError:
+        return {"error": "departure_time must be HH:MM"}, 422
+
+    origin = (request.args.get("origin") or "").strip().upper()
+    destination = (request.args.get("destination") or "").strip().upper()
+    # Optional override; stays None (not a guessed default) until the fallback
+    # chain below resolves it from a catalogue lookup or the final 120min default.
+    _dur_raw = (request.args.get("scheduled_elapsed_time") or "").strip()
+    try:
+        scheduled_elapsed_time = float(_dur_raw) if _dur_raw else None
+    except ValueError:
+        return {"error": "scheduled_elapsed_time must be a number"}, 422
+    route_source = "entered" if (origin and destination) else None
+
+    if (not origin or not destination) and carrier_code and flight_number:
+        lookup = lookup_flight_by_number(carrier_code, flight_number)
+        if lookup:
+            origin, destination = lookup["origin_airport"], lookup["destination_airport"]
+            scheduled_elapsed_time = scheduled_elapsed_time or lookup["scheduled_elapsed_time"]
+            route_source = "2019 training catalogue"
+
+    if not origin or not destination:
+        return {"error": ("Could not resolve a route. Pass origin and destination directly, "
+                          "or a flight_number this app's 2019 catalogue actually has.")}, 422
+    if not carrier_code:
+        return {"error": "carrier is required (either directly, or embedded in flight_number, e.g. AA101)."}, 422
+
+    scheduled_elapsed_time = scheduled_elapsed_time or 120
+    dep_dt = datetime.combine(travel_date, datetime.min.time()).replace(hour=dep_hour, minute=dep_minute)
+
+    if not is_route_covered(origin, destination):
+        reference = get_reference_flights(origin, destination)
+        return {
+            "flight_number": flight_number_raw or None, "date": date_str,
+            "origin": origin, "destination": destination,
+            "scheduled_departure": departure_time,
+            "delay_probability": None, "expected_delay_minutes": None,
+            "risk_severity": "NOT_MODELED",
+            "prediction_type": "pre_departure",
+            "note": ("This route isn't in the trained dataset, so no real delay-risk number "
+                    "exists for it." + (" A reference schedule (not a risk prediction) exists: "
+                    f"{reference[0]['carrier']}, ~{reference[0]['scheduled_elapsed_time']}min."
+                    if reference else " No reference schedule exists either.")),
+        }, 200
+
+    origin_weather = None
+    try:
+        origin_weather = airport_weather(origin, dep_dt)
+    except Exception as e:
+        print(f"[api] delay-prediction origin forecast skipped: {e}")
+    dest_weather = None
+    try:
+        arr_dt = dep_dt + timedelta(minutes=scheduled_elapsed_time)
+        dest_weather = airport_weather(destination, arr_dt)
+    except Exception as e:
+        print(f"[api] delay-prediction destination forecast skipped: {e}")
+
+    prob = predict_delay_probability(
+        carrier_code=carrier_code, origin_airport=origin, destination_airport=destination,
+        weekday=travel_date.weekday(), month=travel_date.month,
+        scheduled_elapsed_time=scheduled_elapsed_time,
+        origin_temp_f=(origin_weather or DEFAULT_WEATHER)["temp_f"],
+        origin_temp_known=origin_weather is not None,
+        origin_precip_in=(origin_weather or DEFAULT_WEATHER)["precip_in"],
+        origin_pressure=(origin_weather or DEFAULT_WEATHER)["pressure"],
+        origin_visibility=(origin_weather or DEFAULT_WEATHER)["visibility"],
+        origin_wind_speed=(origin_weather or DEFAULT_WEATHER)["wind_speed"],
+        scheduled_hour=dep_hour, is_holiday=is_holiday_date(date_str),
+        dest_weather=dest_weather,
+    )
+    label = risk_label(prob)
+
+    expected_delay_minutes = 0
+    if label != "Low":
+        duration = estimate_delay_duration(carrier_code, origin, destination, dep_hour)
+        expected_delay_minutes = duration["median_min"] if duration else None
+
+    return {
+        "flight_number": flight_number_raw or None,
+        "date": date_str,
+        "origin": origin,
+        "destination": destination,
+        "scheduled_departure": departure_time,
+        "delay_probability": round(prob, 4),
+        "expected_delay_minutes": expected_delay_minutes,
+        "risk_severity": label.upper(),
+        "prediction_type": "pre_departure",
+        # Beyond the requested contract, kept because silently dropping how the
+        # number was produced is how a real prediction gets mistaken for a live
+        # schedule lookup - see this route's own docstring.
+        "route_source": route_source,
+        "weather_source": "forecast" if origin_weather else "no forecast available (clear-weather default used)",
+    }, 200
 
 
 @app.route("/api/showcase-flight")

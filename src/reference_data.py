@@ -1,5 +1,7 @@
 """
 Static public reference data (IATA carrier/airport codes -> human names).
+distance_miles_between() is the one function here, not a lookup table - see
+its own docstring.
 This is NOT derived from the project's private datasets - it's the same
 kind of lookup table any flight-booking UI ships with, used only to make
 codes readable in dropdowns. Only carriers that actually appear in
@@ -7,6 +9,7 @@ outputs/cleaned_flight_weather_unified.csv are offered in the dropdown; the
 airport map covers common US hubs and falls back to the raw code for the
 rest (there is no airport-name dataset in this project to draw from).
 """
+import math
 
 CARRIER_NAMES = {
     "AA": "American Airlines",
@@ -114,3 +117,22 @@ def airport_label(code: str) -> str:
     code = (code or "").upper()
     city = AIRPORT_CITY.get(code)
     return f"{city} ({code})" if city else code
+
+
+_EARTH_RADIUS_MI = 3958.8
+
+
+def distance_miles_between(origin_iata: str, destination_iata: str) -> float | None:
+    """Real great-circle distance between two airports, from their real published
+    coordinates (AIRPORT_COORDS, already used for weather lookups) - not the
+    road/airway distance BTS reports, but a close, honest, always-computable
+    proxy for it. None when either airport has no published coordinates, same
+    convention as weather_live.airport_weather."""
+    a = AIRPORT_COORDS.get((origin_iata or "").upper())
+    b = AIRPORT_COORDS.get((destination_iata or "").upper())
+    if not a or not b:
+        return None
+    lat1, lon1, lat2, lon2 = map(math.radians, (a[0], a[1], b[0], b[1]))
+    dlat, dlon = lat2 - lat1, lon2 - lon1
+    h = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+    return round(2 * _EARTH_RADIUS_MI * math.asin(math.sqrt(h)), 1)

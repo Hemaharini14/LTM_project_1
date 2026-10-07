@@ -99,6 +99,13 @@
   <h2>Your alternative plan</h2>
   <div class="recommendation-text">{{ recommendation.recommendation_text | render_markdown | safe }}</div>
 
+  {% if recommendation.real_market_price %}
+  <p class="dataset-note">Today's real market price for this route (Google Flights):
+    <strong>{{ recommendation.real_market_price.price_usd | money }}</strong>
+    ({{ recommendation.real_market_price.airline }}{% if recommendation.real_market_price.stops == 0 %}, nonstop{% elif recommendation.real_market_price.stops %}, {{ recommendation.real_market_price.stops }} stop{{ 's' if recommendation.real_market_price.stops != 1 }}{% endif %}{% if recommendation.real_market_price.departure_time %}, real {{ recommendation.real_market_price.departure_time[-5:] }} → {{ recommendation.real_market_price.arrival_time[-5:] }}{% endif %}) -
+    one real route-level price, not tied to any single flight below.</p>
+  {% endif %}
+
   {% if recommendation.alternative_flights %}
   <h3>Alternative flights</h3>
   <div class="card-row">

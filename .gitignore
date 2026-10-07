@@ -13,8 +13,11 @@ outputs/
 
 # Trained model artifacts (regenerate via src/train_delay_model_v2.py)
 models/artifacts/
-# Pre-retrain snapshot kept on disk for rollback; derived, never committed
+# Pre-retrain snapshots kept on disk for rollback/comparison; derived, never committed
 models/artifacts_backup/
+models/artifacts_pre_bts/
+models/artifacts_bts/
+models/artifacts_bts_v2/
 
 # SQLite database (plus WAL-mode side files - see src/db.py)
 *.db
@@ -37,3 +40,5 @@ static/showcase/
 # state, and the cache can hold a lot of flight rows.
 data/cache/
 data/aviationstack_usage.json
+data/serpapi_usage.json
+data/weatherapi_usage.json

@@ -42,6 +42,7 @@ from predict_delay_v2 import predict_delay_probability, risk_label
 from recovery_tools import search_alternative_flights, search_hotel_options, get_destination_weather
 from budget_optimizer import reallocate_budget, summarize_budget
 from llm_utils import get_llm
+from serpapi_prices import real_flight_price
 
 
 def _check_risk(trip: dict) -> tuple[float, str]:
@@ -54,11 +55,37 @@ def _check_risk(trip: dict) -> tuple[float, str]:
         origin_pressure=trip["origin_pressure"], origin_visibility=trip["origin_visibility"],
         origin_wind_speed=trip["origin_wind_speed"],
         scheduled_hour=trip.get("scheduled_hour", 12), is_holiday=trip.get("is_holiday", False),
+        # Carried over from the /flight-delay form's own forecast lookup (api.py) -
+        # None when it wasn't available, which leaves the model on its own
+        # dest_weather_known=0 path, same as any other unknown.
+        dest_weather=trip.get("dest_weather"),
     )
     return prob, risk_label(prob)
 
 
-def _deterministic_recovery(trip: dict, delay_probability: float, label: str) -> dict:
+def _real_market_price(trip: dict) -> dict | None:
+    """One real Google Flights price for this route/date (SerpApi), or None.
+
+    Called at most once per recovery session - not inside a tool the agent
+    could retry, and not per alternative - because the quota (250 SerpApi
+    searches/month, shared across this project's whole SerpApi usage) cannot
+    absorb a call per candidate flight. This is route-level context ("what
+    does this route cost today"), not a price for any specific historical
+    flight below - search_alternative_flights still has no real per-flight
+    fare, which is why 'cost' priority there still ranks by duration.
+    """
+    if not trip.get("travel_date"):
+        return None
+    try:
+        return real_flight_price(trip["origin_airport"], trip["destination_airport"],
+                                 trip["travel_date"], adults=trip.get("adults", 1))
+    except Exception as e:
+        print(f"[recovery_graph] real market price skipped: {e}")
+        return None
+
+
+def _deterministic_recovery(trip: dict, delay_probability: float, label: str,
+                            real_price: dict | None = None) -> dict:
     """The exact previous fixed pipeline - used when no LLM is configured, so the
     recovery flow always works even without agentic behavior."""
     alts = search_alternative_flights(
@@ -86,13 +113,16 @@ def _deterministic_recovery(trip: dict, delay_probability: float, label: str) ->
                       f"~${hotels[0]['median_nightly_rate_usd']}/night.")
     if weather:
         parts.append(f"Destination weather: {weather['condition']}, {weather['temperature_celsius']}°C.")
+    if real_price:
+        parts.append(f"Today's real market price for this route: ${real_price['price_usd']:.2f} "
+                     f"({real_price['airline']}).")
     parts.append(f"Budget adjusted by ${extra_cost:.2f} under '{trip.get('priority')}' priority.")
 
     return {
         "delay_probability": delay_probability, "risk_label": label,
         "alternative_flights": alts, "hotel_options": hotels, "destination_weather": weather,
         "extra_cost": extra_cost, "new_budget": summarize_budget(new_budget),
-        "budget_shortfall": shortfall, "trim_log": trim_log,
+        "budget_shortfall": shortfall, "trim_log": trim_log, "real_market_price": real_price,
         "recommendation_text": " ".join(parts), "mode": "deterministic (no LLM key configured)",
     }
 
@@ -123,7 +153,8 @@ def _summarize(delay_probability: float, label: str, data: dict, trip: dict) -> 
     return " ".join(parts)
 
 
-def _agentic_recovery(trip: dict, delay_probability: float, label: str) -> dict:
+def _agentic_recovery(trip: dict, delay_probability: float, label: str,
+                      real_price: dict | None = None) -> dict:
     """LLM agent decides which real tools to call. Each tool stashes its real return
     value into `collected` (a closure variable) as a side effect, in addition to
     returning a text summary for the agent to reason over - so the final structured
@@ -236,7 +267,7 @@ def _agentic_recovery(trip: dict, delay_probability: float, label: str) -> dict:
         "Never invent a flight, hotel, price or weather value - report only what a tool returned. "
         f"Priority is '{trip.get('priority', 'cost')}': for 'time' or 'comfort' recommend the "
         "LOWEST delay_probability returned (NOT the shortest flight); for 'cost' prefer the "
-        "shortest duration, as no real fare data exists. "
+        "shortest duration (still no per-flight fare), mentioning real_market_price if given. "
         "If every option comes back high-risk, you may retry search_alternatives with a "
         "different weekday_offset. "
         "already_booked lists what the traveller has already paid for: don't propose "
@@ -253,6 +284,7 @@ def _agentic_recovery(trip: dict, delay_probability: float, label: str) -> dict:
         "already_booked": trip.get("committed") or [],
         "staying_at": trip.get("stay_name") or None,
         "planned_sightseeing": trip.get("planned_spots") or [],
+        "real_market_price": real_price,
     })
     try:
         # recursion_limit caps agent+tool node visits (~2 per step), bounding worst-case
@@ -286,6 +318,7 @@ def _agentic_recovery(trip: dict, delay_probability: float, label: str) -> dict:
         # option downstream, this only marks the recommended one.
         "recommended_booking_index": collected.get("recommended_booking_index"),
         "recommendation_text": recommendation_text,
+        "real_market_price": real_price,
         "mode": mode,
     }
 
@@ -299,10 +332,14 @@ def run_recovery(trip: dict) -> dict:
                                      f"no recovery action needed. Proceed with your original booking."),
             "mode": "no-action",
         }
+    # Fetched once here, not inside either path below - this function runs once
+    # per recovery session regardless of which path is taken, so this is the one
+    # place that bounds it to a single real SerpApi call (see _real_market_price).
+    real_price = _real_market_price(trip)
     llm = get_llm()
     if llm is None:
-        return _deterministic_recovery(trip, delay_probability, label)
-    return _agentic_recovery(trip, delay_probability, label)
+        return _deterministic_recovery(trip, delay_probability, label, real_price)
+    return _agentic_recovery(trip, delay_probability, label, real_price)
 
 
 class _RecoveryApp:

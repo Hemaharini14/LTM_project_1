@@ -147,7 +147,8 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce")
 
-    for col in NUMERIC_WEATHER_COLS + ["departure_delay", "arrival_delay", "scheduled_elapsed_time"]:
+    for col in NUMERIC_WEATHER_COLS + ["departure_delay", "arrival_delay", "scheduled_elapsed_time",
+                                       "distance_miles"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
@@ -184,7 +185,7 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
 
     df_flown["is_delayed"] = (df_flown["departure_delay"] > DELAY_THRESHOLD_MINUTES).astype(int)
 
-    for col in NUMERIC_WEATHER_COLS:
+    for col in NUMERIC_WEATHER_COLS + ["distance_miles"]:
         if col in df_flown.columns:
             missing = df_flown[col].isna().sum()
             if missing > 0:

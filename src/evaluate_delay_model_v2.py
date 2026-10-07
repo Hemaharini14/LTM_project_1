@@ -47,14 +47,25 @@ from sklearn.metrics import (roc_auc_score, accuracy_score, classification_repor
                               precision_score, recall_score, f1_score)
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from model_preprocessing import FlightWeatherEncoder, load_clean_flight_weather, CAT_COLS, CONT_COLS, TARGET_COL
+from model_preprocessing import (FlightWeatherEncoder, load_clean_flight_weather, chronological_split,
+                                 CAT_COLS, CONT_COLS, TARGET_COL)
 from delay_model_v2 import DelayNetV2
 from config import UNIFIED_FLIGHT_WEATHER_CLEAN_PATH, OUTPUT_DIR
 
-ARTIFACT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "models", "artifacts")
+# DELAY_DATA_PATH / DELAY_ARTIFACT_DIR let a candidate model (e.g. the BTS one,
+# see build_bts_dataset.py) train and evaluate beside the live one without
+# touching it. Unset, both point at the live model as before.
+ARTIFACT_DIR = os.environ.get("DELAY_ARTIFACT_DIR") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "models", "artifacts")
+DATA_PATH = os.environ.get("DELAY_DATA_PATH") or UNIFIED_FLIGHT_WEATHER_CLEAN_PATH
+# Must match whatever train_delay_model_v2.py actually used for this artifact,
+# or this reconstructs the wrong held-out rows - see model_preprocessing.chronological_split.
+SPLIT_STRATEGY = os.environ.get("DELAY_SPLIT_STRATEGY", "chronological")
 METRICS_PATH = os.path.join(ARTIFACT_DIR, "metrics_v2.json")
 CALIBRATOR_PATH = os.path.join(ARTIFACT_DIR, "calibrator_v2.joblib")
-VALIDATION_SAMPLE_PATH = os.path.join(OUTPUT_DIR, "validation_sample.csv")
+VALIDATION_SAMPLE_PATH = (os.path.join(ARTIFACT_DIR, "validation_sample.csv")
+                          if os.environ.get("DELAY_ARTIFACT_DIR")
+                          else os.path.join(OUTPUT_DIR, "validation_sample.csv"))
 SAMPLE_SIZE = 300
 
 
@@ -81,20 +92,40 @@ def _auc_by_prior_leg(val_df, y_true, probs) -> dict:
 
 
 def main():
-    print("Loading unified dataset and reconstructing the original validation split...")
-    df = load_clean_flight_weather(UNIFIED_FLIGHT_WEATHER_CLEAN_PATH)
-    # Same call, same random_state, same stratify column as train_delay_model_v2.py -
-    # this reproduces the identical held-out 15% the model never trained on,
-    # as long as the underlying CSV hasn't changed since that training run.
-    train_df, val_df = train_test_split(df, test_size=0.15, random_state=42, stratify=df[TARGET_COL])
-    print(f"Validation set: {len(val_df):,} real held-out flights "
-          f"({val_df[TARGET_COL].mean():.1%} actually delayed)")
-
     encoder = FlightWeatherEncoder.load(os.path.join(ARTIFACT_DIR, "delay_encoder_v2.joblib"))
     ckpt = torch.load(os.path.join(ARTIFACT_DIR, "delay_model_v2.pt"), map_location="cpu")
     model = DelayNetV2(ckpt["vocab_sizes"], ckpt["n_continuous"])
     model.load_state_dict(ckpt["model_state"])
     model.eval()
+
+    # What this EXACT checkpoint actually trained on, not whatever
+    # DELAY_SPLIT_STRATEGY happens to default to right now - those can
+    # silently disagree and reconstruct the wrong held-out rows with no
+    # error. Older checkpoints saved before this field existed fall back to
+    # the env var/default, same as before, with a visible warning either way.
+    split_strategy = ckpt.get("split_strategy")
+    if split_strategy is None:
+        split_strategy = SPLIT_STRATEGY
+        print(f"[evaluate_delay_model_v2] WARNING: this checkpoint predates split-strategy "
+              f"recording - assuming '{split_strategy}' (DELAY_SPLIT_STRATEGY/default). "
+              f"If that's wrong, the reported metrics are on the wrong rows.")
+    elif split_strategy != SPLIT_STRATEGY:
+        print(f"[evaluate_delay_model_v2] DELAY_SPLIT_STRATEGY='{SPLIT_STRATEGY}' was set, but this "
+              f"checkpoint was trained with '{split_strategy}' - using '{split_strategy}' "
+              f"(what the model actually saw), not the env var.")
+
+    print(f"Loading unified dataset and reconstructing the original '{split_strategy}' validation split...")
+    df = load_clean_flight_weather(DATA_PATH)
+    # Same split function/parameters as train_delay_model_v2.py (and, for
+    # "random", the same random_state and stratify column) - this reproduces
+    # the identical held-out 15% the model never trained on, as long as the
+    # underlying CSV hasn't changed since that training run.
+    if split_strategy == "chronological":
+        train_df, val_df = chronological_split(df, test_size=0.15)
+    else:
+        train_df, val_df = train_test_split(df, test_size=0.15, random_state=42, stratify=df[TARGET_COL])
+    print(f"Validation set: {len(val_df):,} real held-out flights "
+          f"({val_df[TARGET_COL].mean():.1%} actually delayed)")
 
     x_cat = torch.tensor(encoder.transform_cat(val_df))
     x_cont = torch.tensor(encoder.transform_cont(val_df))
