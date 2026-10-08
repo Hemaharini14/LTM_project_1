@@ -282,3 +282,21 @@ def test_search_page_renders_with_form(client):
 def test_frontend_never_uses_innerhtml():
     js = open(os.path.join(ROOT, "static", "js", "flight_search.js"), encoding="utf-8").read()
     assert "innerHTML" not in js
+
+
+# ------------------------------------------------------------ "why this score"
+def test_drivers_follow_the_weather_and_only_for_delaynet(monkeypatch):
+    storm = {"temp_f": 34.0, "precip_in": 0.5, "pressure": 29.4, "visibility": 1.5,
+             "wind_speed": 25.0, "source": "open-meteo"}
+    with_weather(monkeypatch, storm)
+    us = aviationstack.normalize_live(api_row(
+        departure={"iata": "ATL", "timezone": "America/New_York", "scheduled": f"{TODAY}T19:00:00+00:00"},
+        arrival={"iata": "LGA", "timezone": "America/New_York", "scheduled": f"{TODAY}T21:20:00+00:00"},
+        airline={"name": "Delta", "iata": "DL"}, flight={"number": "1", "iata": "DL1"}))
+    p = fs.predict_flight(us)
+    assert p["status"] == "ok" and p["model"] == "DelayNetV2"
+    assert p["why"]["drivers"], "a stormy flight must have named drivers"
+    assert p["why"]["drivers"][0]["factor"] in ("Precipitation", "Visibility")
+
+    india = fs.predict_flight(aviationstack.normalize_live(api_row()))
+    assert india["why"] is None and "India route model" in india["why_note"]

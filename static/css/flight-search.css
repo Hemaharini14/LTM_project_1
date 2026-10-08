@@ -76,3 +76,10 @@
   .fs-kv { grid-template-columns: 1fr; }
   .fs-kv dt { margin-top: 6px; }
 }
+
+.fs-why-title { margin-top: 12px; font-weight: 600; color: #f2f7fb; font-size: 0.9rem; }
+.fs-why { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
+.fs-why li { display: grid; grid-template-columns: 1fr 90px 36px; gap: 10px; align-items: center; font-size: 0.85rem; }
+.fs-why-bar { height: 6px; background: rgba(255,255,255,0.08); border-radius: 6px; overflow: hidden; }
+.fs-why-bar i { display: block; height: 100%; background: linear-gradient(90deg, #0e7490, #67e8f9); border-radius: 6px; }
+.fs-why-pts { text-align: right; color: var(--teal); font-weight: 600; }

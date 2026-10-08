@@ -76,7 +76,34 @@
     if (t) {
       box.appendChild(el('div', 'fs-fine',
         'If delayed, flights like this typically run about ' + t.median_min + ' min late (median of ' +
-        t.sample_size.toLocaleString() + ' historical delayed flights: ' + t.basis + '). This is a historical statistic, not a forecast for this flight.'));
+        t.sample_size.toLocaleString() + ' historical delayed flights: ' + t.basis + '). Most common cause on this route historically: ' +
+        (t.top_cause || 'not recorded') + '. This is route history, not a forecast or a reason for this flight.'));
+    }
+    if (p.why && p.why.drivers && p.why.drivers.length) {
+      if (detailed) {
+        box.appendChild(el('div', 'fs-why-title', 'Why this score'));
+        box.appendChild(el('div', 'fs-fine', p.why.summary));
+        var ul = el('ul', 'fs-why');
+        var top = p.why.drivers[0].impact || 1;
+        p.why.drivers.forEach(function (d) {
+          var li = el('li');
+          li.appendChild(el('span', null, d.factor + ' (' + d.value + ')'));
+          var b = el('span', 'fs-why-bar'); var f = el('i');
+          f.style.width = Math.max(4, Math.round(d.impact / top * 100)) + '%'; b.appendChild(f);
+          li.appendChild(b);
+          li.appendChild(el('span', 'fs-why-pts', '+' + Math.round(d.impact * 100)));
+          ul.appendChild(li);
+        });
+        box.appendChild(ul);
+        box.appendChild(el('div', 'fs-fine',
+          'Points show how much each condition adds to this flight\'s risk versus a calm baseline. ' +
+          'They describe this model\'s sensitivities, not physical causes.'));
+      } else {
+        var names = p.why.drivers.slice(0, 2).map(function (d) { return d.factor.toLowerCase() + ' (' + d.value + ')'; });
+        box.appendChild(el('div', 'fs-fine', 'Main drivers: ' + names.join(', ') + '.'));
+      }
+    } else if (detailed && p.why_note) {
+      box.appendChild(el('div', 'fs-fine', p.why_note));
     }
     if (detailed) box.appendChild(el('div', 'fs-fine', 'Model: ' + p.model));
     return box;

@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import aviationstack
 from delay_duration import estimate_delay_duration
+from explain_delay import explain as explain_delay
 from feature_engineering import is_holiday_date
 from model_metrics import load_model_metrics
 from predict_delay_v2 import predict_delay_probability, risk_label
@@ -236,6 +237,24 @@ def predict_flight(f: dict) -> dict:
     delayed = (prob >= threshold) if threshold is not None else (tier == "High")
 
     duration = estimate_delay_duration(carrier, origin, dest, dep.hour) if (delayed or tier != "Low") else None
+    model_name = _model_name(carrier, origin, dest)
+
+    # Which of THIS flight's conditions push the score (explain_delay.py re-scores the
+    # flight with each condition set to a calm baseline). It probes DelayNetV2, so it is
+    # only offered when DelayNetV2 produced the number - never presented against the
+    # India model's score, which it did not come from.
+    why = None
+    if model_name == "DelayNetV2":
+        try:
+            why = explain_delay(
+                carrier_code=carrier, origin_airport=origin, destination_airport=dest,
+                weekday=dep.weekday(), month=dep.month, scheduled_elapsed_time=elapsed,
+                origin_temp_f=origin_wx["temp_f"], origin_precip_in=origin_wx["precip_in"],
+                origin_pressure=origin_wx["pressure"], origin_visibility=origin_wx["visibility"],
+                origin_wind_speed=origin_wx["wind_speed"], scheduled_hour=dep.hour,
+                is_holiday=is_holiday_date(dep.date().isoformat()))
+        except Exception as e:
+            print(f"[flight_search] explanation skipped: {e}")
     return {
         "status": "ok", "reason": None,
         "delay_probability": round(prob, 4),
@@ -245,7 +264,11 @@ def predict_flight(f: dict) -> dict:
         "threshold_note": ("Decision threshold from this model's own held-out evaluation "
                            "(maximises F1)." if threshold is not None
                            else "No evaluation threshold on file; using the app's High-risk tier."),
-        "model": _model_name(carrier, origin, dest),
+        "model": model_name,
+        "why": why,
+        "why_note": None if why else (
+            "Per-condition drivers are only available for DelayNetV2 predictions; this flight "
+            "was scored by the India route model." if model_name != "DelayNetV2" else None),
         # NOT a prediction for this flight - see the module docstring.
         "typical_delay_if_delayed": ({
             "median_min": duration["median_min"], "p90_min": duration["p90_min"],

@@ -263,8 +263,11 @@
       </p>
       {% endif %}
       {% if result.duration.top_cause and result.duration.basis != 'overall' %}
-      <p>Usual reason: <strong>{{ result.duration.top_cause }}</strong>
+      <p>Most common cause on this route, historically: <strong>{{ result.duration.top_cause }}</strong>
         ({{ (result.duration.top_cause_share * 100) | round(0) | int }}% of delay minutes)</p>
+      <p class="dataset-note">This is the route's past, not a reason for your flight's score &mdash; it
+        doesn't change with the weather. What is driving <em>this</em> flight's risk is the
+        &ldquo;Why this flight is at risk&rdquo; box above.</p>
       <ul class="cause-list">
         {% for cause, share in result.duration.causes.items() %}
         <li><span>{{ cause }}</span>
