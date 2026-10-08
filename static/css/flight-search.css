@@ -64,3 +64,19 @@
   .fs-kv { grid-template-columns: 1fr; }
   .fs-kv dt { margin-top: 6px; }
 }
+
+/* The site theme is dark and sets light default text; these cards are white, so every
+   colour inside them is pinned rather than inherited. */
+.fs-card, .fs-modal-card { color: #1f2d2f; background: #fff; }
+.fs-card strong, .fs-card .fs-iata, .fs-modal-card strong { color: #1f2d2f; }
+.fs-card .fs-airline, .fs-modal h2, .fs-modal h3, .fs-card .fs-time { color: #0f6674; }
+.fs-card .fs-code, .fs-card .fs-city, .fs-card .fs-meta, .fs-card .fs-fine, .fs-card .fs-bar-label,
+.fs-modal-card .fs-fine, .fs-modal-card .fs-city, .fs-kv dt, .fs-unavail { color: #5b6b6d; }
+.fs-kv dd { color: #1f2d2f; }
+.fs-bar { background: #e3e9ea; }
+.fs-line { background: #bfe3e6; }
+.fs-pred { border-top-color: #d9e2e3; }
+.fs-card .btn-secondary, .fs-modal-card .btn-secondary {
+  background: #0f6674; color: #fff; border: 0; box-shadow: 0 6px 16px rgba(15, 102, 116, 0.3); opacity: 1;
+}
+.fs-card .btn-secondary:disabled { background: #9db3b6; }

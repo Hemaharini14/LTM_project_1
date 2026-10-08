@@ -132,8 +132,11 @@
     resultsEl.textContent = '';
     setStatus('Searching live flights…', null, true);
     var submit = document.getElementById('fs-submit'); submit.disabled = true;
-    fetch('/api/flights/search?' + params.toString(), { headers: { 'Accept': 'application/json' } })
+    var ctl = new AbortController();
+    var timer = setTimeout(function () { ctl.abort(); }, 45000);
+    fetch('/api/flights/search?' + params.toString(), { headers: { 'Accept': 'application/json' }, signal: ctl.signal })
       .then(function (r) {
+        clearTimeout(timer);
         if (r.status === 401 || r.redirected) { window.location = '/login?next=/flight-search'; return null; }
         return r.json().then(function (b) { return { ok: r.ok, body: b }; });
       })
@@ -147,9 +150,12 @@
         showNotice(res.body.meta);
         res.body.flights.forEach(function (f) { resultsEl.appendChild(card(f)); });
       })
-      .catch(function () {
+      .catch(function (err) {
+        clearTimeout(timer);
         submit.disabled = false;
-        setStatus('Could not reach the server. Check your connection and try again.', 'error');
+        setStatus(err && err.name === 'AbortError'
+          ? 'The search took too long (over 45 seconds). The live flight service may be busy or rate-limited - try again in a minute.'
+          : 'Could not reach the server. Check your connection and try again.', 'error');
       });
   });
 

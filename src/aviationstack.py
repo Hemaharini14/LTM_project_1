@@ -137,8 +137,13 @@ def _note(status: str, cached: bool = False, age_s: float | None = None, stale: 
                   "age_s": round(age_s) if age_s is not None else None, "stale": stale}
 
 
-def _get(endpoint: str, params: dict, ttl: float | None = None) -> dict | None:
-    """One API call, served from disk when possible and refused past the cap."""
+def _get(endpoint: str, params: dict, ttl: float | None = None,
+         max_wait: float = 75) -> dict | None:
+    """One API call, served from disk when possible and refused past the cap.
+
+    max_wait is the longest this call will sleep for the rate-limit window to reopen.
+    Batch collectors can afford the default; a person watching a spinner cannot, so
+    the search path passes a few seconds and fails fast with 'rate_limited'."""
     ttl = _TTL_S.get(endpoint, 900) if ttl is None else ttl
     path = _cache_path(endpoint, params)
     if path.exists() and (time.time() - path.stat().st_mtime) < ttl:
@@ -174,7 +179,7 @@ def _get(endpoint: str, params: dict, ttl: float | None = None) -> dict | None:
     for attempt in (1, 2):
         wait = _blocked_until - time.time()
         if wait > 0:
-            if wait > 75:
+            if wait > max_wait:
                 print(f"[aviationstack] rate window closed for another {wait:.0f}s - skipping")
                 _note("rate_limited")
                 return None
@@ -204,8 +209,8 @@ def _get(endpoint: str, params: dict, ttl: float | None = None) -> dict | None:
                     _blocked_until = float(r.headers.get("x-rate-limit-reset", 0))
             except (TypeError, ValueError):
                 pass
-            if r.status_code == 429 and attempt == 1:
-                wait = max(5.0, min(_blocked_until - time.time() + 1, 70.0))
+            if r.status_code == 429 and attempt == 1 and max_wait >= 5:
+                wait = max(5.0, min(_blocked_until - time.time() + 1, 70.0, max_wait))
                 print(f"[aviationstack] rate limited, waiting {wait:.0f}s")
                 time.sleep(wait)
                 continue
@@ -317,7 +322,7 @@ def flight_now(flight_iata: str) -> dict | None:
 
 
 def future_schedule(origin_iata: str, on: str | date, limit: int = 100,
-                    offset: int = 0) -> tuple[list[dict], int]:
+                    offset: int = 0, max_wait: float = 75) -> tuple[list[dict], int]:
     """Real scheduled departures for a future date (flightsFuture).
 
     No delay figures - the day has not happened - but real flight numbers,
@@ -337,7 +342,7 @@ def future_schedule(origin_iata: str, on: str | date, limit: int = 100,
     params = {"iataCode": (origin_iata or "").upper(), "type": "departure", "date": when}
     if offset:
         params["offset"] = offset
-    body = _get("flightsFuture", params)
+    body = _get("flightsFuture", params, max_wait=max_wait)
     total = ((body or {}).get("pagination") or {}).get("total") or 0
     out = []
     for f in (body or {}).get("data", [])[:limit]:
@@ -363,6 +368,8 @@ def future_schedule(origin_iata: str, on: str | date, limit: int = 100,
 # because a live board goes stale in minutes, but not zero: the free plan allows
 # only ~100 calls a MONTH, so identical searches must never hit it twice.
 SEARCH_CACHE_TTL_S = float(os.environ.get("FLIGHT_SEARCH_CACHE_TTL_S", "300"))
+# A user is waiting on a spinner: never sleep longer than this for the rate window.
+SEARCH_MAX_WAIT_S = float(os.environ.get("FLIGHT_SEARCH_MAX_WAIT_S", "6"))
 
 
 def search_live(dep_iata: str | None = None, arr_iata: str | None = None,
@@ -381,7 +388,7 @@ def search_live(dep_iata: str | None = None, arr_iata: str | None = None,
         params["arr_iata"] = arr_iata.upper()
     if flight_iata:
         params["flight_iata"] = flight_iata.replace(" ", "").upper()
-    body = _get("flights", params, ttl=SEARCH_CACHE_TTL_S)
+    body = _get("flights", params, ttl=SEARCH_CACHE_TTL_S, max_wait=SEARCH_MAX_WAIT_S)
     if body is None:
         return None
     rows = [normalize_live(f) for f in body.get("data") or []]
@@ -434,7 +441,7 @@ def search_future(origin_iata: str, on: str | date, destination_iata: str | None
     locally by destination or flight designator. Times are HH:MM local with no
     date or timezone, so nothing here can state a duration - the prediction layer
     must source that elsewhere or decline."""
-    rows, total = future_schedule(origin_iata, on, limit=1000)
+    rows, total = future_schedule(origin_iata, on, limit=1000, max_wait=SEARCH_MAX_WAIT_S)
     info = last_call_info()
     if not rows and info["status"] != "ok":
         return None

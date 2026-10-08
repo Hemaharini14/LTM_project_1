@@ -26,6 +26,7 @@ import re
 import sys
 from datetime import date, datetime, timedelta
 from datetime import date as Date
+from concurrent.futures import ThreadPoolExecutor
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -276,7 +277,7 @@ _API_ERRORS = {
 }
 
 
-def search_flights(q: SearchQuery, limit: int = 10) -> dict:
+def search_flights(q: SearchQuery, limit: int = 8) -> dict:
     today = date.today()
     day = q.date or today
     if day < today:
@@ -305,14 +306,22 @@ def search_flights(q: SearchQuery, limit: int = 10) -> dict:
         raise FlightSearchError("no_flights", "No flights matched that search. Check the airports, "
                                               "flight number and date.", 404)
 
-    flights = []
-    for r in rows:
+    def build(r):
         r = dict(r)
         r["id"] = flight_id(r, day)
         r["duration_min"] = (lambda e: round(e) if e else None)(
             _elapsed_minutes(r)[0] if r.get("scheduled_arrival") else None)
         r["prediction"] = predict_flight(r)
-        flights.append(r)
+        return r
+
+    # Each flight costs two weather lookups (network, ~2s each). Scored one after
+    # another a full page took longer than a user will watch a spinner, so they run
+    # in parallel. The first goes alone: it loads the model, which must not happen
+    # in several threads at once.
+    flights = [build(rows[0])]
+    if len(rows) > 1:
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            flights += list(pool.map(build, rows[1:]))
 
     return {
         "query": {"origin": q.origin, "destination": q.destination,
