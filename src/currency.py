@@ -27,7 +27,7 @@ _CACHE_TTL_SECONDS = 3600
 # changes presentation, never the arithmetic or the budget optimiser.
 DEFAULT_CURRENCY = "INR"
 
-_rates_cache = {"rates": {"USD": 1.0}, "fetched_at": 0.0}
+_rates_cache = {"rates": {"USD": 1.0}, "fetched_at": None}
 
 
 def _refresh_rates():
@@ -44,7 +44,8 @@ def _refresh_rates():
 
 
 def get_rates() -> dict:
-    if time.monotonic() - _rates_cache["fetched_at"] > _CACHE_TTL_SECONDS:
+    last = _rates_cache["fetched_at"]
+    if last is None or time.monotonic() - last > _CACHE_TTL_SECONDS:
         _refresh_rates()
     return _rates_cache["rates"]
 
@@ -77,6 +78,8 @@ def format_money(usd_amount: float, currency: str) -> str:
     if usd_amount is None:
         return ""
     currency = currency if currency in SUPPORTED_CURRENCIES else DEFAULT_CURRENCY
+    if currency != "USD" and currency not in get_rates():
+        currency = "USD"  # no rate available: show honest dollars, not dollars with a rupee sign
     symbol = SUPPORTED_CURRENCIES[currency]["symbol"]
     converted = convert(usd_amount, currency)
     return f"{symbol}{converted:,.2f}"
