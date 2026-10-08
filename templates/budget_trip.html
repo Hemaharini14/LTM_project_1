@@ -1,7 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Trip Planner · SmartRouteAI{% endblock %}
 {% block head %}
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css"/>
 <link rel="stylesheet" href="{{ url_for('static', filename='css/trip-planner.css') }}">
 {% endblock %}
 {% block body_class %}tp-page{% endblock %}
@@ -190,7 +189,7 @@
       <div class="tp-big">{{ carrier_name(f.carrier) }}</div>
       <div class="tp-kv"><span>Duration</span><span>~{{ f.scheduled_elapsed_time }} min</span></div>
       {% if plan.real_outbound_price %}
-      <div class="tp-kv"><span>Real price today</span><span>{{ plan.real_outbound_price.price_usd | money }} ({{ plan.real_outbound_price.airline }})</span></div>
+      <div class="tp-kv"><span>Real price today</span><span>{{ (plan.real_outbound_price.price_usd * (plan.travelers or 1)) | money }}{% if (plan.travelers or 1) > 1 %} ({{ plan.real_outbound_price.price_usd | money }} × {{ plan.travelers }}){% endif %} · {{ plan.real_outbound_price.airline }}</span></div>
       {% if plan.real_outbound_price.departure_time %}
       <div class="tp-kv"><span>Real departure → arrival</span><span>{{ plan.real_outbound_price.departure_time[-5:] }} → {{ plan.real_outbound_price.arrival_time[-5:] }}</span></div>
       {% endif %}
@@ -215,7 +214,7 @@
       {% if plan.hotel_options %}
       {% set h = plan.hotel_options[0] %}
       <div class="tp-big">{{ h.median_nightly_rate_usd | money }}/night</div>
-      <div class="tp-kv"><span>Total ({{ plan.nights }}n)</span><span>{{ (h.median_nightly_rate_usd * plan.nights) | money }}</span></div>
+      <div class="tp-kv"><span>Total ({{ plan.nights }}n)</span><span>{{ (h.median_nightly_rate_usd * plan.nights * (plan.rooms or 1)) | money }}</span></div>
       <div class="tp-kv"><span>Reliability</span><span>{{ h.reliability_pct }}%</span></div>
       {% if plan.real_priced_hotels %}
       <div class="tp-kv"><span>Real hotels from</span><span>{{ (plan.real_priced_hotels | map(attribute='nightly_rate_usd') | min) | money }}/night</span></div>
@@ -311,7 +310,7 @@
   {% if real_price %}
   <div class="tp-card" style="margin-bottom:14px;padding:14px 18px">
     <span class="tp-pill good">Real market price (Google Flights, today)</span>
-    <span style="margin-left:10px;font-weight:700">{{ real_price.price_usd | money }}</span>
+    <span style="margin-left:10px;font-weight:700">{{ (real_price.price_usd * (plan.travelers or 1)) | money }}</span>{% if (plan.travelers or 1) > 1 %}<span class="muted" style="margin-left:6px">({{ real_price.price_usd | money }} × {{ plan.travelers }} travellers)</span>{% endif %}
     <span class="muted" style="margin-left:8px">{{ real_price.airline }}{% if real_price.stops == 0 %} · nonstop{% elif real_price.stops %} · {{ real_price.stops }} stop{{ 's' if real_price.stops != 1 }}{% endif %}</span>
     {% if real_price.departure_time %}
     <span class="muted" style="margin-left:8px">· real {{ real_price.departure_time[-5:] }} → {{ real_price.arrival_time[-5:] }}</span>
@@ -364,7 +363,7 @@
     <div class="tp-card">
       {% if loop.first %}<span class="tp-pill tag-best">Best match for your budget</span>{% endif %}
       <h3 style="margin-top:8px">{{ h.median_nightly_rate_usd | money }}/night</h3>
-      <div class="tp-kv"><span>Total</span><span>{{ (h.median_nightly_rate_usd * plan.nights) | money }}</span></div>
+      <div class="tp-kv"><span>Total</span><span>{{ (h.median_nightly_rate_usd * plan.nights * (plan.rooms or 1)) | money }}</span></div>
       <div class="tp-kv"><span>Reliability</span><span>{{ h.reliability_pct }}%</span></div>
       <p class="muted" style="font-size:11.5px;margin-top:8px">Real historical pricing tier — no property name in this dataset.</p>
     </div>
@@ -386,13 +385,12 @@
         {% if loop.first %}<span class="tp-pill tag-best">Cheapest real option</span>{% endif %}
         <h4 style="margin-top:6px">{{ h.name }}</h4>
         <div class="tp-kv"><span>Rate</span><span>{{ h.nightly_rate_usd | money }}/night</span></div>
-        {% if h.total_rate_usd %}<div class="tp-kv"><span>Total</span><span>{{ h.total_rate_usd | money }}</span></div>{% endif %}
+        {% if h.total_rate_usd %}<div class="tp-kv"><span>Total{% if (plan.rooms or 1) > 1 %} ({{ plan.rooms }} rooms){% endif %}</span><span>{{ (h.total_rate_usd * (plan.rooms or 1)) | money }}</span></div>{% endif %}
         {% if h.rating %}<div class="tp-kv"><span>Rating</span><span>⭐ {{ h.rating }}{% if h.reviews %} ({{ h.reviews }}){% endif %}</span></div>{% endif %}
         {% if h.hotel_class %}<p class="muted" style="font-size:11.5px;margin-top:6px">{{ h.hotel_class }}{% if h.amenities %} · {{ h.amenities | join(', ') }}{% endif %}</p>{% endif %}
         {% if h.link %}
         <div class="tp-attraction-actions">
           <span class="tp-mini-btn tp-mini-btn-primary" onclick="tpOpenBooking('{{ h.name|e }}', '{{ h.link|e }}', 'Google Hotels')">🔗 Book</span>
-          {% if h.lat and h.lon %}<span class="tp-mini-btn" onclick="tpFlyTo({{ h.lat }},{{ h.lon }})">📍 Map</span>{% endif %}
         </div>
         {% endif %}
       </div>
@@ -436,7 +434,6 @@
       <div class="tp-area">{{ s.area }}</div>
       <div class="tp-attraction-actions">
         <span class="tp-mini-btn tp-add-btn" onclick="tpToggleItinerary(this, '{{ s.name|e }}')">+ Add</span>
-        {% if s.lat and s.lon %}<span class="tp-mini-btn" onclick="tpFlyTo({{ s.lat }},{{ s.lon }})">📍 Map</span>{% endif %}
       </div>
     </div>
     {% endfor %}
@@ -452,7 +449,6 @@
       <div class="tp-area">{{ s.area }}</div>
       <div class="tp-attraction-actions">
         <span class="tp-mini-btn tp-add-btn" onclick="tpToggleItinerary(this, '{{ s.name|e }}')">+ Add</span>
-        {% if s.lat and s.lon %}<span class="tp-mini-btn" onclick="tpFlyTo({{ s.lat }},{{ s.lon }})">📍 Map</span>{% endif %}
       </div>
     </div>
     {% endfor %}
@@ -460,13 +456,6 @@
   {% endif %}
 </section>
 
-<!-- ============================== MAP ============================== -->
-<section class="tp-section">
-  <div class="tp-section-head"><h2>🗺 Map</h2><span class="tp-sub">Real coordinates — hotels (amber), attractions (teal) and hidden gems (purple)</span></div>
-  <div class="tp-card" style="padding:8px">
-    <div id="tp-map"></div>
-  </div>
-</section>
 {% endif %}
 
 <!-- ============================== ITINERARY ============================== -->
@@ -535,7 +524,6 @@
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/place-autocomplete.js') }}"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <script>
 (function(){
   // ---- loading overlay: shown on real form submit, until the new page replaces it ----
@@ -604,63 +592,6 @@
     if (e.target === this) tpCloseBooking();
   });
 
-  // ---- map: real coordinates only, nothing plotted without a real lat/lon ----
-  var mapEl = document.getElementById('tp-map');
-  if (mapEl && window.L) {
-    var points = [];
-    // Every card with a "📍 Map" button (attractions, hidden gems AND real hotels).
-    document.querySelectorAll('.tp-attraction-card').forEach(function(card){
-      var btn = card.querySelector('[onclick^="tpFlyTo"]');
-      if (!btn) return;
-      var m = btn.getAttribute('onclick').match(/tpFlyTo\(([-\d.eE+]+),\s*([-\d.eE+]+)\)/);
-      if (!m) return;
-      var badge = card.querySelector('.tp-cat-badge');
-      var h = card.querySelector('h4');
-      var isHotel = !badge;
-      points.push({lat: parseFloat(m[1]), lon: parseFloat(m[2]),
-                   name: h ? h.textContent : '',
-                   cat: badge ? badge.textContent : 'Hotel',
-                   hotel: isHotel,
-                   hidden: card.closest('#tp-hidden-spots') !== null});
-    });
-    if (points.length) {
-      var map = L.map('tp-map');
-      // Esri's dark canvas, not CARTO - CARTO's free dark tiles now gate behind an
-      // API key and show "API KEY REQUIRED" (see static/js/flight_map.js, which hit
-      // this first). Esri numbers tiles {z}/{y}/{x} - NOT Leaflet's {z}/{x}/{y} - get
-      // that backwards and it silently renders the wrong hemisphere, mostly ocean.
-      L.tileLayer(
-        'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/' +
-        'World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
-          attribution: 'Basemap &copy; <a href="https://www.esri.com">Esri</a>',
-          maxZoom: 16,
-        }).addTo(map);
-      var bounds = [];
-      points.forEach(function(p){
-        var color = p.hotel ? '#FBBF24' : (p.hidden ? '#818CF8' : '#5EEAD4');
-        var marker = L.circleMarker([p.lat, p.lon], {radius: 8, color: color, fillColor: color, fillOpacity: 0.85, weight: 2}).addTo(map);
-        marker.bindPopup('<div class="tp-popup"><b>' + p.name + '</b><span class="tp-popup-sub">' + p.cat + '</span></div>');
-        p.marker = marker;
-        bounds.push([p.lat, p.lon]);
-      });
-      map.fitBounds(bounds, {padding: [30,30]});
-      // The map sits far below the cards, so scroll it into view first, otherwise the
-      // click appears to do nothing.
-      window.tpFlyTo = function(lat, lon){
-        mapEl.scrollIntoView({behavior: 'smooth', block: 'center'});
-        map.invalidateSize();
-        map.flyTo([lat, lon], 15);
-        points.forEach(function(p){
-          if (Math.abs(p.lat - lat) < 1e-6 && Math.abs(p.lon - lon) < 1e-6) p.marker.openPopup();
-        });
-      };
-    } else {
-      mapEl.innerHTML = '<p class="muted" style="padding:20px">No coordinates available for this destination\'s spots.</p>';
-    }
-  } else if (mapEl) {
-    mapEl.innerHTML = '<p class="muted" style="padding:20px">The map library could not load (check your internet connection).</p>';
-  }
-  if (!window.tpFlyTo) window.tpFlyTo = function(){ var m = document.getElementById('tp-map'); if (m) m.scrollIntoView({behavior: 'smooth', block: 'center'}); };
 })();
 </script>
 {% endblock %}
