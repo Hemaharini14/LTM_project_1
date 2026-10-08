@@ -42,3 +42,6 @@ data/aviationstack_usage.json
 data/serpapi_usage.json
 data/weatherapi_usage.json
 build_out/
+
+# per-machine API call counters
+data/*_usage.json
