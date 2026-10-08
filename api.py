@@ -40,6 +40,8 @@ from serpapi_prices import real_flight_price, real_hotel_prices
 from recovery_graph import build_graph
 from recovery_tools import get_dataset_index, is_route_covered, lookup_flight_by_number
 from trip_planner import plan_budget_trip
+import flight_search as fs
+from pydantic import ValidationError
 from trip_graph import plan_trip as run_trip_graph
 from transport_modes import compare_transport_modes, describe_mode
 from places import autocomplete_places
@@ -1120,6 +1122,101 @@ def api_delay_prediction():
         "route_source": route_source,
         "weather_source": "forecast" if origin_weather else "no forecast available (clear-weather default used)",
     }, 200
+
+
+# ---------------------------------------------------------------- live flight search
+# Real-time flights (Aviationstack) + weather (Open-Meteo) -> the existing delay
+# model. See src/flight_search.py. Login is required on all of it: every uncached
+# search spends part of a ~100-calls-a-month API allowance.
+
+def _api_login_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not session.get("user_id"):
+            return {"error": {"code": "login_required", "message": "Please log in."}}, 401
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def _validation_message(e: ValidationError) -> str:
+    return "; ".join(err["msg"].removeprefix("Value error, ") for err in e.errors())
+
+
+def _with_display_fare(flight: dict) -> dict:
+    fare = fs.optional_fare(flight)
+    flight["fare"] = ({
+        "display": currency_utils.format_money(
+            fare["price_usd"], session.get("currency", currency_utils.DEFAULT_CURRENCY)),
+        "airline": fare.get("airline"), "stops": fare.get("stops"),
+        "source": "Google Flights via SerpApi (cheapest option on this route and date, per adult)",
+        "same_flight": False,
+    } if fare else None)
+    return flight
+
+
+@app.route("/flight-search")
+@login_required
+def flight_search_page():
+    return render_template("flight_search.html", **_dropdown_options())
+
+
+@app.route("/api/flights/search")
+@_api_login_required
+def api_flights_search():
+    try:
+        q = fs.SearchQuery(origin=request.args.get("origin"),
+                           destination=request.args.get("destination"),
+                           flight_number=request.args.get("flight_number"),
+                           date=request.args.get("date"))
+    except ValidationError as e:
+        return {"error": {"code": "invalid_request", "message": _validation_message(e)}}, 400
+    try:
+        return fs.search_flights(q), 200
+    except fs.FlightSearchError as e:
+        return {"error": {"code": e.code, "message": e.message}}, e.status
+    except Exception as e:  # never a stack trace to the browser
+        print(f"[api] flight search failed: {e}")
+        return {"error": {"code": "internal_error",
+                          "message": "Something went wrong while searching. Please try again."}}, 500
+
+
+@app.route("/api/flights/<flight_id>")
+@_api_login_required
+def api_flight_details(flight_id):
+    try:
+        out = fs.flight_details(flight_id)
+        if request.args.get("include_price") == "1":
+            _with_display_fare(out["flight"])
+        return out, 200
+    except fs.FlightSearchError as e:
+        return {"error": {"code": e.code, "message": e.message}}, e.status
+    except Exception as e:
+        print(f"[api] flight details failed: {e}")
+        return {"error": {"code": "internal_error",
+                          "message": "Couldn't load that flight. Please try again."}}, 500
+
+
+@app.route("/api/flights/predict-delay", methods=["POST"])
+@_api_login_required
+def api_flights_predict():
+    try:
+        req = fs.PredictRequest(**(request.get_json(silent=True) or {}))
+    except ValidationError as e:
+        return {"error": {"code": "invalid_request", "message": _validation_message(e)}}, 400
+    flight = {
+        "airline_iata": req.airline_iata, "origin_iata": req.origin_iata,
+        "destination_iata": req.destination_iata,
+        "scheduled_departure": req.scheduled_departure, "scheduled_arrival": req.scheduled_arrival,
+        "flight_number": req.flight_number, "origin_timezone": req.origin_timezone,
+        "destination_timezone": req.destination_timezone, "status": req.status,
+    }
+    try:
+        prediction = fs.predict_flight(flight)
+    except Exception as e:
+        print(f"[api] predict-delay failed: {e}")
+        return {"error": {"code": "model_error",
+                          "message": "The delay model couldn't score this flight."}}, 500
+    return {"flight": flight, "weather": prediction.get("weather"), "prediction": prediction}, 200
 
 
 @app.route("/api/showcase-flight")

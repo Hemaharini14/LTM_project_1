@@ -72,6 +72,8 @@ def _fetch(lat: float, lon: float, on: date) -> dict | None:
             "temperature_unit": "fahrenheit", "wind_speed_unit": "mph",
             "precipitation_unit": "inch",
             "start_date": on.isoformat(), "end_date": on.isoformat(),
+            # local clock hours, so index [hour] is the airport's own hour of day
+            "timezone": "auto",
         }, timeout=12)
         r.raise_for_status()
         return r.json().get("hourly")

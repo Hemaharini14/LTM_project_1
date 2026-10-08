@@ -21,6 +21,7 @@
     <div class="nav-links">
       <a href="{{ url_for('home') }}" class="{{ 'active' if request.path == url_for('home') }}">Dashboard</a>
       <a href="{{ url_for('flight_delay') }}" class="{{ 'active' if request.path == url_for('flight_delay') }}">Delay Check</a>
+      <a href="{{ url_for('flight_search_page') }}" class="{{ 'active' if request.path == url_for('flight_search_page') }}">Live Flights</a>
       <a href="{{ url_for('budget_trip') }}" class="{{ 'active' if request.path == url_for('budget_trip') }}">Budget Trip</a>
       <a href="{{ url_for('history') }}" class="{{ 'active' if request.path == url_for('history') }}">History</a>
       {% if is_admin %}

@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from datetime import date, datetime
 from pathlib import Path
@@ -119,18 +120,38 @@ def _cache_path(endpoint: str, params: dict) -> Path:
     return _CACHE_DIR / f"{endpoint}__{safe}.json"
 
 
+# What happened on this thread's most recent _get(): lets a caller tell "no flights
+# exist" from "the key is missing" / "the quota is spent" / "the API is down", and
+# whether the answer was served from the disk cache (and how old it is) instead of
+# a live call. _get() still returns plain None on every failure, so existing callers
+# are unaffected; only the flight-search layer reads this.
+_last = threading.local()
+
+
+def last_call_info() -> dict:
+    return dict(getattr(_last, "info", None) or {"status": "unknown", "cached": False})
+
+
+def _note(status: str, cached: bool = False, age_s: float | None = None, stale: bool = False):
+    _last.info = {"status": status, "cached": cached,
+                  "age_s": round(age_s) if age_s is not None else None, "stale": stale}
+
+
 def _get(endpoint: str, params: dict, ttl: float | None = None) -> dict | None:
     """One API call, served from disk when possible and refused past the cap."""
     ttl = _TTL_S.get(endpoint, 900) if ttl is None else ttl
     path = _cache_path(endpoint, params)
     if path.exists() and (time.time() - path.stat().st_mtime) < ttl:
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            body = json.loads(path.read_text(encoding="utf-8"))
+            _note("ok", cached=True, age_s=time.time() - path.stat().st_mtime)
+            return body
         except Exception:
             pass
 
     api_key = _key()
     if not api_key:
+        _note("no_key")
         return None
 
     u = _load_usage()
@@ -140,9 +161,12 @@ def _get(endpoint: str, params: dict, ttl: float | None = None) -> dict | None:
         # A stale cached answer beats no answer at all once the budget is gone.
         if path.exists():
             try:
-                return json.loads(path.read_text(encoding="utf-8"))
+                body = json.loads(path.read_text(encoding="utf-8"))
+                _note("ok", cached=True, age_s=time.time() - path.stat().st_mtime, stale=True)
+                return body
             except Exception:
                 pass
+        _note("quota_exhausted")
         return None
 
     global _last_call, _blocked_until
@@ -152,6 +176,7 @@ def _get(endpoint: str, params: dict, ttl: float | None = None) -> dict | None:
         if wait > 0:
             if wait > 75:
                 print(f"[aviationstack] rate window closed for another {wait:.0f}s - skipping")
+                _note("rate_limited")
                 return None
             time.sleep(wait + 1)
         gap = time.time() - _last_call
@@ -184,18 +209,28 @@ def _get(endpoint: str, params: dict, ttl: float | None = None) -> dict | None:
                 print(f"[aviationstack] rate limited, waiting {wait:.0f}s")
                 time.sleep(wait)
                 continue
+            if r.status_code == 429:
+                _note("rate_limited")
+                return None
             r.raise_for_status()
             body = r.json()
             break
         except Exception as e:
             print(f"[aviationstack] {endpoint} failed: {_redact(e)}")
+            _note("api_unreachable")
             return None
     if body is None:
+        _note("rate_limited")
         return None
 
     if isinstance(body, dict) and "error" in body:
         err = body["error"]
         print(f"[aviationstack] {endpoint} refused: {err.get('code')} {err.get('message')}")
+        code = str(err.get("code") or "")
+        _note("rate_limited" if "rate_limit" in code or "usage_limit" in code
+              else "plan_restricted" if "restricted" in code
+              else "invalid_key" if "key" in code
+              else "api_error")
         return None
 
     try:
@@ -203,6 +238,7 @@ def _get(endpoint: str, params: dict, ttl: float | None = None) -> dict | None:
         path.write_text(json.dumps(body), encoding="utf-8")
     except Exception:
         pass
+    _note("ok", cached=False, age_s=0)
     return body
 
 
@@ -321,6 +357,117 @@ def future_schedule(origin_iata: str, on: str | date, limit: int = 100,
             "weekday": f.get("weekday"),
         })
     return out, total
+
+
+# Seconds a flight-search answer is reused before the API is called again. Short
+# because a live board goes stale in minutes, but not zero: the free plan allows
+# only ~100 calls a MONTH, so identical searches must never hit it twice.
+SEARCH_CACHE_TTL_S = float(os.environ.get("FLIGHT_SEARCH_CACHE_TTL_S", "300"))
+
+
+def search_live(dep_iata: str | None = None, arr_iata: str | None = None,
+                flight_iata: str | None = None, limit: int = 12) -> list[dict] | None:
+    """Real-time flight records (flights endpoint) with every field the API
+    publishes for the flight, left None where it is absent - never filled in.
+
+    None means the call failed (see last_call_info() for why); [] means the API
+    answered and has no matching flight. The free plan returns the current
+    flight board, not an arbitrary past or future date.
+    """
+    params = {"limit": limit}
+    if dep_iata:
+        params["dep_iata"] = dep_iata.upper()
+    if arr_iata:
+        params["arr_iata"] = arr_iata.upper()
+    if flight_iata:
+        params["flight_iata"] = flight_iata.replace(" ", "").upper()
+    body = _get("flights", params, ttl=SEARCH_CACHE_TTL_S)
+    if body is None:
+        return None
+    rows = [normalize_live(f) for f in body.get("data") or []]
+    # A codeshare is the same aircraft sold under another number; the operating
+    # record carries the real delay, so it wins when both are present.
+    rows.sort(key=lambda r: 1 if r["codeshared"] else 0)
+    return rows
+
+
+def normalize_live(f: dict) -> dict:
+    dep, arr = f.get("departure") or {}, f.get("arrival") or {}
+    al, fl = f.get("airline") or {}, f.get("flight") or {}
+    ac = f.get("aircraft") or {}
+    return {
+        "source": "aviationstack_live",
+        "flight_iata": (_clean(fl.get("iata")) or None),
+        "flight_icao": (_clean(fl.get("icao")) or None),
+        "flight_number": _clean(fl.get("number")),
+        "airline_name": _clean(al.get("name")),
+        "airline_iata": _clean(al.get("iata")),
+        "airline_icao": _clean(al.get("icao")),
+        "codeshared": bool(fl.get("codeshared")),
+        "origin_iata": _clean(dep.get("iata")),
+        "origin_airport": _clean(dep.get("airport")),
+        "origin_timezone": _clean(dep.get("timezone")),
+        "destination_iata": _clean(arr.get("iata")),
+        "destination_airport": _clean(arr.get("airport")),
+        "destination_timezone": _clean(arr.get("timezone")),
+        "scheduled_departure": dep.get("scheduled"),
+        "scheduled_arrival": arr.get("scheduled"),
+        "estimated_departure": dep.get("estimated"),
+        "estimated_arrival": arr.get("estimated"),
+        "actual_departure": dep.get("actual"),
+        "actual_arrival": arr.get("actual"),
+        "departure_delay_min": dep.get("delay"),
+        "arrival_delay_min": arr.get("delay"),
+        "status": f.get("flight_status"),
+        "aircraft": _clean(ac.get("iata")) or _clean(ac.get("icao")) or _clean(ac.get("registration")),
+        "terminal_departure": _clean(dep.get("terminal")),
+        "gate_departure": _clean(dep.get("gate")),
+        "terminal_arrival": _clean(arr.get("terminal")),
+        "gate_arrival": _clean(arr.get("gate")),
+        "baggage_belt": _clean(arr.get("baggage")),
+    }
+
+
+def search_future(origin_iata: str, on: str | date, destination_iata: str | None = None,
+                  flight_iata: str | None = None, limit: int = 12) -> list[dict] | None:
+    """Scheduled flights for a future date from an origin (flightsFuture), narrowed
+    locally by destination or flight designator. Times are HH:MM local with no
+    date or timezone, so nothing here can state a duration - the prediction layer
+    must source that elsewhere or decline."""
+    rows, total = future_schedule(origin_iata, on, limit=1000)
+    info = last_call_info()
+    if not rows and info["status"] != "ok":
+        return None
+    dest = (destination_iata or "").upper()
+    wanted = (flight_iata or "").replace(" ", "").upper()
+    when = on.isoformat() if isinstance(on, date) else str(on)
+    out = []
+    for r in rows:
+        if dest and r["destination"] != dest:
+            continue
+        if wanted and r["flight_iata"] != wanted:
+            continue
+        out.append({
+            "source": "aviationstack_schedule",
+            "flight_iata": r["flight_iata"], "flight_icao": None,
+            "flight_number": r["flight_number"],
+            "airline_name": r["carrier_name"], "airline_iata": r["carrier_iata"],
+            "airline_icao": None, "codeshared": False,
+            "origin_iata": r["origin"], "origin_airport": None, "origin_timezone": None,
+            "destination_iata": r["destination"], "destination_airport": None,
+            "destination_timezone": None,
+            "scheduled_departure": f"{when}T{r['scheduled_departure']}" if r["scheduled_departure"] else None,
+            "scheduled_arrival": f"{when}T{r['scheduled_arrival']}" if r["scheduled_arrival"] else None,
+            "estimated_departure": None, "estimated_arrival": None,
+            "actual_departure": None, "actual_arrival": None,
+            "departure_delay_min": None, "arrival_delay_min": None,
+            "status": "scheduled", "aircraft": r["aircraft_model"],
+            "terminal_departure": r["terminal"], "gate_departure": None,
+            "terminal_arrival": None, "gate_arrival": None, "baggage_belt": None,
+        })
+        if len(out) >= limit:
+            break
+    return out
 
 
 if __name__ == "__main__":

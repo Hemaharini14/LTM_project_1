@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Live Flight Search · SmartRouteAI{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/flight-search.css') }}">
+{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Live flight search &amp; delay prediction</h1>
+  <p>Real flights from Aviationstack, real weather from Open-Meteo, scored by our trained delay model.</p>
+</section>
+
+<div class="panel fs-form-panel">
+  <datalist id="airport-list">
+    {% for a in airports %}<option value="{{ a.code }}">{{ a.label }}</option>{% endfor %}
+  </datalist>
+  <form id="fs-form" class="form-stack" autocomplete="off">
+    <div class="form-grid">
+      <label>From <span class="muted">(airport code)</span>
+        <input type="text" name="origin" list="airport-list" placeholder="MAA" maxlength="40">
+      </label>
+      <label>To <span class="muted">(airport code)</span>
+        <input type="text" name="destination" list="airport-list" placeholder="DEL" maxlength="40">
+      </label>
+      <label>Flight number <span class="muted">(optional)</span>
+        <input type="text" name="flight_number" placeholder="e.g. 6E698" maxlength="8">
+      </label>
+      <label>Date
+        <input type="date" name="date" id="fs-date">
+      </label>
+    </div>
+    <p class="muted fs-hint">Search by flight number, or by route. Today's date shows the live board; a future date
+      looks up the airline schedule from the departure airport.</p>
+    <button class="btn btn-primary" type="submit" id="fs-submit">Search flights</button>
+  </form>
+</div>
+
+<div id="fs-status" class="fs-status" role="status" aria-live="polite"></div>
+<div id="fs-results" class="fs-results"></div>
+
+<div id="fs-modal" class="fs-modal" hidden>
+  <div class="fs-modal-card" role="dialog" aria-modal="true" aria-labelledby="fs-modal-title">
+    <button type="button" class="fs-modal-close" id="fs-modal-close" aria-label="Close">×</button>
+    <div id="fs-modal-body"></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/flight_search.js') }}"></script>
+{% endblock %}
