@@ -712,6 +712,92 @@ def flight_alternatives():
 
 # ---------------------------------------------------------------- budget trip planner
 
+def _cost_breakdown(plan: dict, inputs: dict) -> dict:
+    """Line-by-line cost of the trip, each line saying what KIND of number it is:
+
+      real       a live market price (Google Flights / Google Hotels via SerpApi)
+      dataset    a median from the hotel-bookings dataset the optimiser uses
+      allowance  a share of YOUR budget set aside - not a price anyone quoted
+      remaining  whatever is left after the lines above
+
+    The optimiser itself (itinerary_optimizer.py) only splits the budget; when a
+    live fare exists it replaces the flight share here, so the flight line is a
+    price, and what is left over moves to sightseeing.
+    """
+    from itinerary_optimizer import FOOD_SHARE, TRANSPORT_SHARE, FLIGHT_SHARE
+    from trip_planner import LEVEL_MULTIPLIER
+
+    cur = session.get("currency", currency_utils.DEFAULT_CURRENCY)
+    m = lambda usd: currency_utils.format_money(usd, cur)
+    t = max(int(plan.get("travelers") or inputs.get("travelers") or 1), 1)
+    nights, rooms = plan.get("nights") or 1, plan.get("rooms") or 1
+    days = inputs.get("days") or (nights + 1)
+    total = inputs["total_budget"]
+    bb = plan.get("budget_breakdown") or {}
+    people = f"{t} traveller{'s' if t != 1 else ''}"
+    items = []
+
+    ob, rt = plan.get("real_outbound_price"), plan.get("real_return_price")
+    if ob or rt:
+        legs, parts = 0.0, []
+        for name, fare in (("outbound", ob), ("return", rt)):
+            if fare:
+                # Google Flights prices the whole party when asked for N adults
+                # (checked: 3 adults = $325 vs 1 adult = $103 on the same route/day),
+                # so the fare is already the party total - never multiply it again.
+                legs += fare["price_usd"]
+                parts.append(f"{m(fare['price_usd'])} {name} ({fare.get('airline') or 'cheapest'}, "
+                             f"{m(fare['price_usd'] / t)} each)")
+        how = " + ".join(parts) + f" for {people}. Cheapest Google Flights fares today, all passengers included."
+        if not (ob and rt):
+            how += f" The {'return' if ob else 'outbound'} fare wasn't available, so it is NOT included."
+        items.append({"label": "Flights", "usd": round(legs, 2), "kind": "real", "how": how})
+    else:
+        items.append({"label": "Flights", "usd": bb.get("flight_cost", total * FLIGHT_SHARE), "kind": "allowance",
+                      "how": f"No live fare was found for this route, so {int(FLIGHT_SHARE * 100)}% of your budget "
+                             f"is set aside. This is a placeholder, not a ticket price."})
+
+    hotel = (plan.get("hotel_options") or [None])[0]
+    real = sorted(plan.get("real_priced_hotels") or [], key=lambda h: h["nightly_rate_usd"])
+    stay = inputs.get("stay_comfort") or "standard"
+    if real:
+        # Live rates for the actual destination, picked to match the stay-comfort
+        # level: cheapest for Budget, the middle option for Standard, the top for Luxury.
+        pick = real[0] if stay == "budget" else real[-1] if stay == "luxury" else real[len(real) // 2]
+        usd = round(pick["nightly_rate_usd"] * nights * rooms, 2)
+        which = {"budget": "cheapest", "luxury": "highest-priced"}.get(stay, "middle")
+        items.append({"label": "Hotel", "usd": usd, "kind": "real",
+                      "how": f"{pick['name']}: {m(pick['nightly_rate_usd'])}/night (Google Hotels, {which} of "
+                             f"{len(real)} live results for your dates, matching '{stay.title()}' stay) × {nights} "
+                             f"night{'s' if nights != 1 else ''} × {rooms} room{'s' if rooms != 1 else ''} (2 people per room)."})
+    elif hotel and bb.get("hotel_cost"):
+        items.append({"label": "Hotel", "usd": bb["hotel_cost"], "kind": "dataset",
+                      "how": f"{m(hotel['median_nightly_rate_usd'])}/night × {nights} night{'s' if nights != 1 else ''} × "
+                             f"{rooms} room{'s' if rooms != 1 else ''} (2 people per room). No live hotel rates were "
+                             f"available, so this is the median {hotel.get('hotel_type', '').lower()} rate from a public "
+                             f"hotel-bookings dataset (hotels in Portugal) - NOT a rate for your destination."})
+
+    for label, key, share, comfort in (("Food", "food_cost", FOOD_SHARE, inputs.get("food_comfort")),
+                                       ("Local transport", "transport_cost", TRANSPORT_SHARE,
+                                        inputs.get("travel_comfort"))):
+        usd = bb.get(key) or 0.0
+        mult = LEVEL_MULTIPLIER.get(comfort or "standard", 1.0)
+        items.append({"label": label, "usd": usd, "kind": "allowance",
+                      "how": f"{int(share * 100)}% of your budget × {mult:g} ({(comfort or 'standard').title()} level) "
+                             f"= {m(usd / max(days * t, 1))} per person per day for {days} days. "
+                             f"An allowance, not quoted prices."})
+
+    spent = sum(i["usd"] for i in items)
+    left = round(total - spent, 2)
+    items.append({"label": "Sightseeing & extras", "usd": max(left, 0.0), "kind": "remaining",
+                  "how": (f"What is left of your budget after the lines above, about "
+                          f"{m(left / max(days * t, 1))} per person per day. It is not a cost estimate - "
+                          f"spend it on entry tickets, activities or shopping.") if left >= 0 else
+                         "Nothing is left: the lines above already exceed your budget."})
+    return {"items": items, "total_usd": spent + max(left, 0.0), "budget_usd": total,
+            "over_budget_usd": -left if left < 0 else 0.0}
+
+
 @app.route("/budget-trip", methods=["GET", "POST"])
 @login_required
 def budget_trip():
@@ -809,6 +895,10 @@ def budget_trip():
         # available, same as every other optional enrichment here, so the page
         # falls back to its existing "no fare data" language rather than
         # breaking when this is unavailable.
+        # When the traveller typed a city instead of an airport, the planner resolves
+        # the nearest airport itself; the fare lookup must use that, not the blank field.
+        if not inputs["destination_airport"] and plan.get("auto_resolved_destination_airport"):
+            inputs["destination_airport"] = plan["auto_resolved_destination_airport"]
         if plan.get("route_covered") or plan.get("route_reference"):
             try:
                 plan["real_outbound_price"] = real_flight_price(
@@ -832,6 +922,10 @@ def budget_trip():
         except Exception as e:
             print(f"[api] real hotel prices skipped: {e}")
             plan["real_priced_hotels"] = []
+        try:
+            plan["cost_breakdown"] = _cost_breakdown(plan, inputs)
+        except Exception as e:
+            print(f"[api] cost breakdown skipped: {e}")
 
         plan["transport_mode"] = inputs["transport_mode"]
         # Real numbers for the mode actually chosen, so a traveller who picked the

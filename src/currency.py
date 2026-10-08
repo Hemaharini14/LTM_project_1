@@ -71,7 +71,8 @@ def to_usd(amount: float, currency: str) -> float:
     rate = get_rates().get(currency)
     if not rate:
         return float(amount)
-    return round(float(amount) / rate, 2)
+    # Not rounded to cents: ₹50,000 rounded to $516.90 displays back as ₹49,999.74.
+    return float(amount) / rate
 
 
 def format_money(usd_amount: float, currency: str) -> str:

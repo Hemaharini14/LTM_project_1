@@ -167,11 +167,11 @@
   <div class="tp-card tp-summary-chip"><div class="tp-label">Destination</div><div class="tp-value">{{ form_data.destination_place or form_data.destination_city }}</div></div>
   <div class="tp-card tp-summary-chip"><div class="tp-label">Dates</div><div class="tp-value">{{ form_data.start_date }} · {{ plan.nights }}n</div></div>
   <div class="tp-card tp-summary-chip"><div class="tp-label">Travellers</div><div class="tp-value">{{ plan.travelers or 1 }}</div></div>
-  <div class="tp-card tp-summary-chip"><div class="tp-label">Budget</div><div class="tp-value">{{ plan.budget_breakdown.total | money }}</div></div>
+  <div class="tp-card tp-summary-chip"><div class="tp-label">Budget</div><div class="tp-value">{{ (plan.cost_breakdown.budget_usd if plan.cost_breakdown else plan.budget_breakdown.total) | money }}</div></div>
 </div>
 
 {% if plan.route_reference %}
-<p class="dataset-note">International route — flight cards below are a reference schedule, no delay-risk score.</p>
+<p class="dataset-note">Our historical flight data has no flights on this route for these weekdays, so the flight cards below are a reference schedule with no delay-risk score. Use Live Flights for a scored, real flight.</p>
 {% elif not plan.route_covered %}
 <div class="tp-card" style="border-color:rgba(251,191,36,0.4)">
   No flight data covers <strong>{{ form_data.origin_airport }}</strong> ↔ <strong>{{ form_data.destination_airport }}</strong>.
@@ -189,7 +189,7 @@
       <div class="tp-big">{{ carrier_name(f.carrier) }}</div>
       <div class="tp-kv"><span>Duration</span><span>~{{ f.scheduled_elapsed_time }} min</span></div>
       {% if plan.real_outbound_price %}
-      <div class="tp-kv"><span>Real price today</span><span>{{ (plan.real_outbound_price.price_usd * (plan.travelers or 1)) | money }}{% if (plan.travelers or 1) > 1 %} ({{ plan.real_outbound_price.price_usd | money }} × {{ plan.travelers }}){% endif %} · {{ plan.real_outbound_price.airline }}</span></div>
+      <div class="tp-kv"><span>Real price today</span><span>{{ plan.real_outbound_price.price_usd | money }}{% if (plan.travelers or 1) > 1 %} for {{ plan.travelers }} ({{ (plan.real_outbound_price.price_usd / plan.travelers) | money }} each){% endif %} · {{ plan.real_outbound_price.airline }}</span></div>
       {% if plan.real_outbound_price.departure_time %}
       <div class="tp-kv"><span>Real departure → arrival</span><span>{{ plan.real_outbound_price.departure_time[-5:] }} → {{ plan.real_outbound_price.arrival_time[-5:] }}</span></div>
       {% endif %}
@@ -246,10 +246,19 @@
 
     <div class="tp-card tp-overview-card">
       <span class="tp-icon">💰</span><h3>Budget</h3>
+      {% if plan.cost_breakdown %}
+      <div class="tp-big">{{ plan.cost_breakdown.total_usd | money }}</div>
+      <div class="tp-kv"><span>Your budget</span><span>{{ plan.cost_breakdown.budget_usd | money }}</span></div>
+      {% if plan.cost_breakdown.over_budget_usd %}
+      <p style="margin-top:8px"><span class="tp-pill bad">Over by {{ plan.cost_breakdown.over_budget_usd | money }}</span></p>
+      {% else %}
+      <p style="margin-top:8px"><span class="tp-pill good">Within budget</span></p>
+      {% endif %}
+      {% else %}
       <div class="tp-big">{{ plan.budget_breakdown.total | money }}</div>
-      {% set remaining = plan.budget_breakdown.total * 0 %}
       <div class="tp-kv"><span>of</span><span>{{ (plan.total_budget_usd if plan.total_budget_usd is defined else plan.budget_breakdown.total) | money }}</span></div>
-      {% if plan.optimizer_feasible %}
+      {% endif %}
+      {% if plan.cost_breakdown %}{% elif plan.optimizer_feasible %}
       <p style="margin-top:8px"><span class="tp-pill good">Within budget</span></p>
       {% else %}
       <p style="margin-top:8px"><span class="tp-pill bad">Over budget</span></p>
@@ -310,7 +319,7 @@
   {% if real_price %}
   <div class="tp-card" style="margin-bottom:14px;padding:14px 18px">
     <span class="tp-pill good">Real market price (Google Flights, today)</span>
-    <span style="margin-left:10px;font-weight:700">{{ (real_price.price_usd * (plan.travelers or 1)) | money }}</span>{% if (plan.travelers or 1) > 1 %}<span class="muted" style="margin-left:6px">({{ real_price.price_usd | money }} × {{ plan.travelers }} travellers)</span>{% endif %}
+    <span style="margin-left:10px;font-weight:700">{{ real_price.price_usd | money }}</span>{% if (plan.travelers or 1) > 1 %}<span class="muted" style="margin-left:6px">for {{ plan.travelers }} travellers ({{ (real_price.price_usd / plan.travelers) | money }} each)</span>{% endif %}
     <span class="muted" style="margin-left:8px">{{ real_price.airline }}{% if real_price.stops == 0 %} · nonstop{% elif real_price.stops %} · {{ real_price.stops }} stop{{ 's' if real_price.stops != 1 }}{% endif %}</span>
     {% if real_price.departure_time %}
     <span class="muted" style="margin-left:8px">· real {{ real_price.departure_time[-5:] }} → {{ real_price.arrival_time[-5:] }}</span>
@@ -483,6 +492,32 @@
 <!-- ============================== BUDGET BREAKDOWN ============================== -->
 <section class="tp-section">
   <div class="tp-section-head"><h2>💰 Budget breakdown</h2></div>
+  {% if plan.cost_breakdown %}
+  {% set cb = plan.cost_breakdown %}
+  <div class="tp-card">
+    {% for it in cb['items'] %}
+    <div class="tp-cost-item">
+      <div class="tp-budget-row">
+        <span class="tp-budget-label">{{ it.label }}</span>
+        <span class="tp-cost-kind kind-{{ it.kind }}">{{ {'real':'Live price','dataset':'Dataset median','allowance':'Budget allowance','remaining':'Left over'}[it.kind] }}</span>
+        <div class="tp-budget-track"><div class="tp-budget-fill" style="width: {{ ((it.usd / cb.total_usd * 100) if cb.total_usd else 0) | round(1) }}%"></div></div>
+        <span class="tp-budget-amt">{{ it.usd | money }}</span>
+      </div>
+      <div class="tp-cost-how">{{ it.how }}</div>
+    </div>
+    {% endfor %}
+    <div class="tp-kv" style="margin-top:10px;border-top:1px solid var(--tp-border);padding-top:10px">
+      <span>Total</span><span><strong>{{ cb.total_usd | money }}</strong> · {{ plan.nights }} night(s)
+        · {{ plan.travelers or 1 }} traveller{{ 's' if (plan.travelers or 1) != 1 }} in {{ plan.rooms or 1 }} room{{ 's' if (plan.rooms or 1) != 1 }}</span>
+    </div>
+    {% if cb.over_budget_usd %}
+    <div class="tp-budget-warn">⚠️ These costs exceed your budget by {{ cb.over_budget_usd | money }}.
+      Try raising the budget, trimming trip length, or a lower comfort tier.</div>
+    {% endif %}
+    <p class="tp-sub" style="margin-top:10px">Live price = real fares/rates today · Dataset median = typical rate from historical bookings ·
+      Budget allowance = a share of your budget set aside, not a quote · Left over = what remains.</p>
+  </div>
+  {% else %}
   <div class="tp-card">
     {% for cat in ['flight_cost','hotel_cost','food_cost','transport_cost','sightseeing_cost'] %}
     <div class="tp-budget-row">
@@ -500,6 +535,7 @@
       Try raising the budget, trimming trip length, or a lower comfort tier.</div>
     {% endif %}
   </div>
+  {% endif %}
 </section>
 
 <!-- ============================== BOOKING MODAL (flights + hotels share this) ============================== -->

@@ -160,7 +160,8 @@ def _get(engine: str, params: dict) -> dict | None:
             r.raise_for_status()
             body = r.json()
         except Exception as e:
-            print(f"[serpapi_prices] {engine} call failed: {e}")
+            # httpx puts the full URL - api_key included - in its message; never log it.
+            print(f"[serpapi_prices] {engine} call failed: {str(e).replace(api_key, '***')}")
             return None
 
         if body.get("error"):
