@@ -1,60 +1,72 @@
+/* Live flight search - dark glass surfaces driven by the site theme tokens
+   (--ink, --muted, --teal, --hairline ...), so it follows the rest of the app. */
 .fs-form-panel { max-width: 960px; margin: 0 auto 20px; }
 .fs-hint { margin: 10px 0 14px; }
 .fs-status { max-width: 960px; margin: 0 auto 14px; min-height: 22px; text-align: center; color: var(--muted); }
-.fs-status.error { color: var(--danger); font-weight: 500; }
-.fs-notice { display: inline-block; background: #fff7e0; border: 1px solid var(--warn); color: #7a5410;
-  border-radius: 999px; padding: 4px 14px; font-size: 0.85rem; }
-.fs-spinner { display: inline-block; width: 16px; height: 16px; border: 3px solid var(--teal-light);
+.fs-status.error { color: #fca5a5; font-weight: 500; }
+.fs-notice { display: inline-block; background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.3);
+  color: #fcd34d; border-radius: 999px; padding: 4px 14px; font-size: 0.85rem; margin-top: 6px; }
+.fs-spinner { display: inline-block; width: 16px; height: 16px; border: 3px solid rgba(34,211,238,0.2);
   border-top-color: var(--teal); border-radius: 50%; animation: fs-spin 0.8s linear infinite; vertical-align: -3px; margin-right: 8px; }
 @keyframes fs-spin { to { transform: rotate(360deg); } }
 
 .fs-results { max-width: 960px; margin: 0 auto 40px; display: grid; gap: 16px; }
-.fs-card { background: #fff; border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px 22px; }
+.fs-card, .fs-modal-card {
+  background: linear-gradient(145deg, rgba(255,255,255,0.055), rgba(255,255,255,0.015));
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow), inset 0 1px 0 0 rgba(255,255,255,0.05);
+  color: var(--ink);
+}
+.fs-card { border-radius: var(--radius); padding: 20px 22px; backdrop-filter: blur(18px) saturate(140%); }
+.fs-card:hover { border-color: rgba(34,211,238,0.3); }
 .fs-card-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-.fs-airline { font-family: 'Quicksand', sans-serif; font-weight: 700; font-size: 1.15rem; color: var(--teal-deep); }
-.fs-code { font-weight: 600; color: var(--muted); letter-spacing: 0.04em; }
+.fs-airline { font-family: 'Quicksand', sans-serif; font-weight: 700; font-size: 1.15rem; color: #f2f7fb; }
+.fs-code { font-weight: 600; color: var(--teal); letter-spacing: 0.08em; }
 
 .fs-route { display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: center; margin: 18px 0 6px; }
 .fs-end { display: flex; flex-direction: column; }
 .fs-end.right { text-align: right; }
-.fs-iata { font-size: 1.6rem; font-weight: 700; line-height: 1.1; }
-.fs-time { font-size: 1.05rem; font-weight: 600; color: var(--teal-deep); }
+.fs-iata { font-size: 1.7rem; font-weight: 700; line-height: 1.1; color: #f2f7fb; letter-spacing: 0.02em; }
+.fs-time { font-size: 1.05rem; font-weight: 600; color: var(--teal); }
 .fs-city { font-size: 0.8rem; color: var(--muted); max-width: 190px; }
 .fs-end.right .fs-city { margin-left: auto; }
-.fs-line { position: relative; height: 2px; background: var(--teal-light); border-radius: 2px; }
+.fs-line { position: relative; height: 1px; background: linear-gradient(90deg, transparent, rgba(34,211,238,0.55), transparent); }
 .fs-line::after { content: "✈"; position: absolute; left: 50%; top: -11px; transform: translateX(-50%);
-  background: #fff; padding: 0 8px; color: var(--teal); }
+  background: #0a1220; padding: 0 8px; color: var(--teal); }
 .fs-meta { text-align: center; font-size: 0.85rem; color: var(--muted); margin-bottom: 4px; }
 
 .fs-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
 .fs-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px;
-  font-size: 0.82rem; font-weight: 600; background: var(--sand-dark); color: var(--ink); }
-.fs-badge.good { background: #dcf3e8; color: #1c6b49; }
-.fs-badge.warn { background: #fdecc8; color: #86590d; }
-.fs-badge.bad { background: #fbdcd9; color: #a3302b; }
-.fs-badge.neutral { background: #e6ecee; color: #4a5b5d; }
+  font-size: 0.82rem; font-weight: 600; border: 1px solid var(--hairline); background: rgba(255,255,255,0.06); color: var(--ink); }
+.fs-badge.good { background: rgba(52,211,153,0.14); color: #6ee7b7; border-color: rgba(52,211,153,0.3); }
+.fs-badge.warn { background: rgba(251,191,36,0.14); color: #fcd34d; border-color: rgba(251,191,36,0.3); }
+.fs-badge.bad { background: rgba(248,113,113,0.14); color: #fca5a5; border-color: rgba(248,113,113,0.3); }
+.fs-badge.neutral { background: rgba(255,255,255,0.07); color: var(--muted); }
 
-.fs-pred { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--sand-dark); }
+.fs-pred { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--hairline); }
 .fs-pred-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
-.fs-bar { height: 12px; background: var(--sand-dark); border-radius: 8px; overflow: hidden; margin: 8px 0 4px; position: relative; }
-.fs-bar > span { display: block; height: 100%; border-radius: 8px; }
-.fs-bar .fs-tick { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--ink); opacity: 0.55; }
+.fs-pred-head strong { color: #f2f7fb; }
+.fs-bar { height: 10px; background: rgba(255,255,255,0.08); border-radius: 8px; margin: 10px 0 4px; position: relative; }
+.fs-bar > span { display: block; height: 100%; border-radius: 8px; box-shadow: 0 0 14px -2px currentColor; }
+.fs-bar .fs-tick { position: absolute; top: -3px; bottom: -3px; width: 2px; background: #f2f7fb; opacity: 0.6; border-radius: 2px; }
 .fs-bar-label { font-size: 0.78rem; color: var(--muted); }
 .fs-unavail { color: var(--muted); font-size: 0.9rem; }
-.fs-fine { font-size: 0.8rem; color: var(--muted); margin-top: 6px; }
+.fs-fine { font-size: 0.8rem; color: var(--muted); margin-top: 6px; line-height: 1.45; }
 .fs-actions { display: flex; justify-content: flex-end; margin-top: 14px; }
 
-.fs-modal { position: fixed; inset: 0; background: rgba(20, 40, 44, 0.55); display: flex; align-items: center;
-  justify-content: center; padding: 16px; z-index: 50; }
+.fs-modal { position: fixed; inset: 0; background: rgba(2, 6, 12, 0.72); backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 50; }
 .fs-modal[hidden] { display: none; }
-.fs-modal-card { background: #fff; border-radius: var(--radius); max-width: 640px; width: 100%; max-height: 90vh;
-  overflow-y: auto; padding: 26px; position: relative; }
-.fs-modal-close { position: absolute; top: 10px; right: 14px; border: 0; background: none; font-size: 1.8rem; cursor: pointer; color: var(--muted); }
-.fs-modal h2 { margin: 0 0 4px; color: var(--teal-deep); }
-.fs-modal h3 { margin: 20px 0 8px; font-size: 1rem; color: var(--teal-deep); }
-.fs-kv { display: grid; grid-template-columns: 150px 1fr; gap: 6px 12px; font-size: 0.92rem; }
+.fs-modal-card { background: #0a1220; border-radius: var(--radius); max-width: 640px; width: 100%;
+  max-height: 90vh; overflow-y: auto; padding: 26px; position: relative; }
+.fs-modal-close { position: absolute; top: 10px; right: 14px; border: 0; background: none; font-size: 1.8rem;
+  cursor: pointer; color: var(--muted); }
+.fs-modal-close:hover { color: var(--ink); }
+.fs-modal h2 { margin: 0 0 4px; }
+.fs-modal h3 { margin: 22px 0 8px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.14em; color: var(--teal); }
+.fs-kv { display: grid; grid-template-columns: 170px 1fr; gap: 7px 12px; font-size: 0.92rem; }
 .fs-kv dt { color: var(--muted); }
-.fs-kv dd { margin: 0; font-weight: 500; }
+.fs-kv dd { margin: 0; font-weight: 500; color: var(--ink); }
 
 @media (max-width: 600px) {
   .fs-route { grid-template-columns: 1fr; text-align: center; gap: 8px; }
@@ -64,19 +76,3 @@
   .fs-kv { grid-template-columns: 1fr; }
   .fs-kv dt { margin-top: 6px; }
 }
-
-/* The site theme is dark and sets light default text; these cards are white, so every
-   colour inside them is pinned rather than inherited. */
-.fs-card, .fs-modal-card { color: #1f2d2f; background: #fff; }
-.fs-card strong, .fs-card .fs-iata, .fs-modal-card strong { color: #1f2d2f; }
-.fs-card .fs-airline, .fs-modal h2, .fs-modal h3, .fs-card .fs-time { color: #0f6674; }
-.fs-card .fs-code, .fs-card .fs-city, .fs-card .fs-meta, .fs-card .fs-fine, .fs-card .fs-bar-label,
-.fs-modal-card .fs-fine, .fs-modal-card .fs-city, .fs-kv dt, .fs-unavail { color: #5b6b6d; }
-.fs-kv dd { color: #1f2d2f; }
-.fs-bar { background: #e3e9ea; }
-.fs-line { background: #bfe3e6; }
-.fs-pred { border-top-color: #d9e2e3; }
-.fs-card .btn-secondary, .fs-modal-card .btn-secondary {
-  background: #0f6674; color: #fff; border: 0; box-shadow: 0 6px 16px rgba(15, 102, 116, 0.3); opacity: 1;
-}
-.fs-card .btn-secondary:disabled { background: #9db3b6; }
