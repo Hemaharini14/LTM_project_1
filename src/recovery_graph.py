@@ -42,7 +42,7 @@ from predict_delay_v2 import predict_delay_probability, risk_label
 from recovery_tools import search_alternative_flights, search_hotel_options, get_destination_weather
 from budget_optimizer import reallocate_budget, summarize_budget
 from llm_utils import get_llm
-from serpapi_prices import real_flight_price
+from ignav_prices import real_flight_price
 
 
 def _check_risk(trip: dict) -> tuple[float, str]:
@@ -64,7 +64,7 @@ def _check_risk(trip: dict) -> tuple[float, str]:
 
 
 def _real_market_price(trip: dict) -> dict | None:
-    """One real Google Flights price for this route/date (SerpApi), or None.
+    """One real fare for this route/date (Ignav; SerpApi only as a fallback), or None.
 
     Called at most once per recovery session - not inside a tool the agent
     could retry, and not per alternative - because the quota (250 SerpApi

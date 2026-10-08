@@ -217,3 +217,22 @@
 .kind-allowance { background: rgba(251,191,36,0.13); color: #fcd34d; }
 .kind-remaining { background: rgba(255,255,255,0.07); color: var(--tp-muted); }
 @media (max-width: 640px) { .tp-cost-how { margin-left: 0; } .tp-cost-kind { width: auto; } }
+
+.tp-flight-choose { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.tp-leg h3 { margin: 0 0 10px; font-size: 15px; }
+.tp-fopt { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; padding: 10px 12px;
+  border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; margin-bottom: 8px; cursor: pointer; font-size: 13px; }
+.tp-fopt:hover { border-color: rgba(34,211,238,0.35); }
+.tp-fopt:has(input:checked) { border-color: rgba(34,211,238,0.7); background: rgba(34,211,238,0.07); }
+.tp-fopt input { accent-color: #22d3ee; }
+.tp-fopt-time { font-weight: 600; }
+.tp-fopt-price { text-align: right; display: flex; flex-direction: column; }
+.tp-fopt-price .muted { font-size: 11px; }
+.tp-fopt-none { grid-template-columns: auto 1fr; }
+.tp-hotel-pick { display: inline-flex; gap: 6px; align-items: center; margin: 6px 0 4px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.tp-hotel-pick input { accent-color: #22d3ee; }
+.tp-fee { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; font-size: 12px; color: var(--tp-muted); }
+.tp-fee[hidden] { display: none; }
+.tp-fee input { padding: 6px 10px; border-radius: 8px; font-size: 13px; }
+.kind-picked { background: rgba(52,211,153,0.14); color: #6ee7b7; }
+.kind-entered { background: rgba(167,139,250,0.15); color: #c4b5fd; }

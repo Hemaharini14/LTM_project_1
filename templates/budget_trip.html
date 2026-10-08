@@ -247,13 +247,9 @@
     <div class="tp-card tp-overview-card">
       <span class="tp-icon">💰</span><h3>Budget</h3>
       {% if plan.cost_breakdown %}
-      <div class="tp-big">{{ plan.cost_breakdown.total_usd | money }}</div>
+      <div class="tp-big" id="tp-ov-total">{{ plan.cost_breakdown.total_usd | money }}</div>
       <div class="tp-kv"><span>Your budget</span><span>{{ plan.cost_breakdown.budget_usd | money }}</span></div>
-      {% if plan.cost_breakdown.over_budget_usd %}
-      <p style="margin-top:8px"><span class="tp-pill bad">Over by {{ plan.cost_breakdown.over_budget_usd | money }}</span></p>
-      {% else %}
-      <p style="margin-top:8px"><span class="tp-pill good">Within budget</span></p>
-      {% endif %}
+      <p style="margin-top:8px" id="tp-ov-pill">{% if plan.cost_breakdown.over_budget_usd %}<span class="tp-pill bad">Over by {{ plan.cost_breakdown.over_budget_usd | money }}</span>{% else %}<span class="tp-pill good">Within budget</span>{% endif %}</p>
       {% else %}
       <div class="tp-big">{{ plan.budget_breakdown.total | money }}</div>
       <div class="tp-kv"><span>of</span><span>{{ (plan.total_budget_usd if plan.total_budget_usd is defined else plan.budget_breakdown.total) | money }}</span></div>
@@ -305,6 +301,45 @@
 <section class="tp-section">
   <div class="tp-card">
     <div class="recommendation-text">{{ plan.recommendation_text | render_markdown | safe }}</div>
+  </div>
+</section>
+{% endif %}
+
+<!-- ============================== CHOOSE FLIGHTS (real priced itineraries) ============================== -->
+{% if plan.flight_options and (plan.flight_options.outbound or plan.flight_options['return']) %}
+<section class="tp-section" id="tp-choose-flights">
+  <div class="tp-section-head"><h2>✈️ Choose your flights</h2>
+    <span class="tp-sub">Real fares today from {{ (plan.flight_options.outbound or plan.flight_options['return'])[0].source_label }} — price is for all {{ plan.travelers or 1 }} traveller{{ 's' if (plan.travelers or 1) != 1 }}. Your pick updates the budget below.</span></div>
+  <div class="tp-flight-choose">
+  {% for leg, label in [('outbound', 'Outbound · ' ~ plan.leg_dates.outbound), ('return', 'Return · ' ~ plan.leg_dates['return'])] %}
+    {% set opts = plan.flight_options[leg] %}
+    <div class="tp-card tp-leg">
+      <h3>{{ label }}</h3>
+      {% if opts %}
+      {% for o in opts %}
+      <label class="tp-fopt">
+        <input type="radio" name="tp-pick-{{ leg }}" value="{{ loop.index0 }}" data-usd="{{ o.price_usd }}"
+               data-label="{{ o.airline }} {{ o.flight_numbers | join(' + ') }}" {{ 'checked' if loop.first }}>
+        <span class="tp-fopt-main">
+          <strong>{{ o.airline }}</strong> <span class="muted">{{ o.flight_numbers | join(' + ') }}</span><br>
+          <span class="tp-fopt-time">{{ (o.departure_time or '')[-5:] }} → {{ (o.arrival_time or '')[-5:] }}</span>
+          <span class="muted">· {{ (o.duration_min // 60) if o.duration_min else '?' }}h {{ '%02d' % (o.duration_min % 60) if o.duration_min else '' }}m ·
+            {% if o.stops == 0 %}nonstop{% else %}{{ o.stops }} stop{{ 's' if o.stops != 1 }} via {{ o.via | join(', ') }}{% endif %}
+            {% if o.self_transfer %}· self-transfer{% endif %}</span>
+        </span>
+        <span class="tp-fopt-price"><strong>{{ o.price_usd | money }}</strong>
+          {% if (plan.travelers or 1) > 1 %}<span class="muted">{{ o.price_per_person_usd | money }} each</span>{% endif %}</span>
+      </label>
+      {% endfor %}
+      <label class="tp-fopt tp-fopt-none">
+        <input type="radio" name="tp-pick-{{ leg }}" value="none" data-usd="0" data-label="not included">
+        <span class="tp-fopt-main muted">I'll arrange this leg myself (leave it out of the budget)</span>
+      </label>
+      {% else %}
+      <p class="muted">No priced flights found for this leg on this date.</p>
+      {% endif %}
+    </div>
+  {% endfor %}
   </div>
 </section>
 {% endif %}
@@ -393,6 +428,8 @@
       <div style="padding:14px">
         {% if loop.first %}<span class="tp-pill tag-best">Cheapest real option</span>{% endif %}
         <h4 style="margin-top:6px">{{ h.name }}</h4>
+        <label class="tp-hotel-pick"><input type="radio" name="tp-pick-hotel" data-usd="{{ h.nightly_rate_usd }}"
+               data-label="{{ h.name }}" {{ 'checked' if h.name == plan.default_hotel_name }}> Stay here</label>
         <div class="tp-kv"><span>Rate</span><span>{{ h.nightly_rate_usd | money }}/night</span></div>
         {% if h.total_rate_usd %}<div class="tp-kv"><span>Total{% if (plan.rooms or 1) > 1 %} ({{ plan.rooms }} rooms){% endif %}</span><span>{{ (h.total_rate_usd * (plan.rooms or 1)) | money }}</span></div>{% endif %}
         {% if h.rating %}<div class="tp-kv"><span>Rating</span><span>⭐ {{ h.rating }}{% if h.reviews %} ({{ h.reviews }}){% endif %}</span></div>{% endif %}
@@ -444,6 +481,9 @@
       <div class="tp-attraction-actions">
         <span class="tp-mini-btn tp-add-btn" onclick="tpToggleItinerary(this, '{{ s.name|e }}')">+ Add</span>
       </div>
+      <label class="tp-fee" hidden>Entry fee per person ({{ current_currency }})
+        <input type="number" min="0" step="1" inputmode="decimal" placeholder="leave blank if unknown" data-spot="{{ s.name }}">
+      </label>
     </div>
     {% endfor %}
   </div>
@@ -459,6 +499,9 @@
       <div class="tp-attraction-actions">
         <span class="tp-mini-btn tp-add-btn" onclick="tpToggleItinerary(this, '{{ s.name|e }}')">+ Add</span>
       </div>
+      <label class="tp-fee" hidden>Entry fee per person ({{ current_currency }})
+        <input type="number" min="0" step="1" inputmode="decimal" placeholder="leave blank if unknown" data-spot="{{ s.name }}">
+      </label>
     </div>
     {% endfor %}
   </div>
@@ -494,7 +537,8 @@
   <div class="tp-section-head"><h2>💰 Budget breakdown</h2></div>
   {% if plan.cost_breakdown %}
   {% set cb = plan.cost_breakdown %}
-  <div class="tp-card">
+  <script type="application/json" id="tp-cost-data">{{ cb.calc | tojson }}</script>
+  <div class="tp-card" id="tp-cost-card">
     {% for it in cb['items'] %}
     <div class="tp-cost-item">
       <div class="tp-budget-row">
@@ -604,6 +648,9 @@
   window.tpToggleItinerary = function(el, name){
     el.classList.toggle('on');
     el.textContent = el.classList.contains('on') ? '✓ Added' : '+ Add';
+    var fee = el.closest('.tp-attraction-card') && el.closest('.tp-attraction-card').querySelector('.tp-fee');
+    if (fee) fee.hidden = !el.classList.contains('on');
+    if (window.tpRecalc) window.tpRecalc();
     try {
       var key = 'tp_itinerary_adds';
       var list = JSON.parse(sessionStorage.getItem(key) || '[]');
@@ -612,6 +659,102 @@
       sessionStorage.setItem(key, JSON.stringify(list));
     } catch (e) {}
   };
+
+  // ---- trip cost from what the traveller actually picked ----
+  // Flights and hotel are the selected real prices; sightseeing is the entry fees
+  // typed for the spots added (no source has real fees, so none are assumed);
+  // food and local transport stay labelled budget allowances.
+  var dataEl = document.getElementById('tp-cost-data');
+  var card = document.getElementById('tp-cost-card');
+  if (dataEl && card) {
+    var C = JSON.parse(dataEl.textContent);
+    var money = function (usd) {
+      var v = usd * (C.currency.rate || 1);
+      return C.currency.symbol + v.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    };
+    var KIND = {real: 'Live price', dataset: 'Dataset median', allowance: 'Budget allowance', remaining: 'Left over',
+                picked: 'Your pick', entered: 'Your entry'};
+    var mk = function (tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+    var picked = function (name) { return document.querySelector('input[name="' + name + '"]:checked'); };
+    var people = C.travelers + ' traveller' + (C.travelers === 1 ? '' : 's');
+
+    window.tpRecalc = function () {
+      var items = [];
+      var legs = [['outbound', 'Outbound'], ['return', 'Return']], fUsd = 0, fParts = [], anyLeg = false;
+      legs.forEach(function (l) {
+        var r = picked('tp-pick-' + l[0]);
+        if (!r) return;
+        anyLeg = true;
+        var usd = parseFloat(r.dataset.usd) || 0;
+        fUsd += usd;
+        fParts.push(l[1] + ': ' + r.dataset.label + (r.value === 'none' ? '' : ' ' + money(usd)));
+      });
+      if (anyLeg) items.push({label: 'Flights', usd: fUsd, kind: 'picked',
+        how: fParts.join(' · ') + ' — total for ' + people + '.'});
+      else if (C.server_flight) items.push(C.server_flight);
+
+      var h = picked('tp-pick-hotel');
+      if (h) {
+        var nightly = parseFloat(h.dataset.usd) || 0;
+        items.push({label: 'Hotel', usd: nightly * C.nights * C.rooms, kind: 'picked',
+          how: h.dataset.label + ': ' + money(nightly) + '/night × ' + C.nights + ' night' + (C.nights === 1 ? '' : 's') +
+               ' × ' + C.rooms + ' room' + (C.rooms === 1 ? '' : 's') + ' (2 people per room).'});
+      } else if (C.server_hotel) items.push(C.server_hotel);
+
+      C.fixed.forEach(function (f) { items.push(f); });
+
+      var added = Array.prototype.slice.call(document.querySelectorAll('.tp-attraction-card .tp-add-btn.on'));
+      var sUsd = 0, priced = [], unpriced = 0;
+      added.forEach(function (btn) {
+        var inp = btn.closest('.tp-attraction-card').querySelector('.tp-fee input');
+        var v = inp && inp.value !== '' ? parseFloat(inp.value) : NaN;
+        if (isNaN(v)) { unpriced++; return; }
+        var usd = v / (C.currency.rate || 1) * C.travelers;
+        sUsd += usd;
+        priced.push(inp.dataset.spot + ' ' + C.currency.symbol + v + ' × ' + C.travelers);
+      });
+      var sHow = added.length === 0 ? 'No spots added yet — use “+ Add” on the places above, then enter each entry fee.'
+        : (priced.length ? priced.join(' + ') + '.' : '') +
+          (unpriced ? ' ' + unpriced + ' added spot' + (unpriced === 1 ? ' has' : 's have') + ' no fee entered and ' + (unpriced === 1 ? 'is' : 'are') + ' not counted.' : '');
+      items.push({label: 'Sightseeing', usd: sUsd, kind: 'entered', how: sHow.trim()});
+
+      var spent = items.reduce(function (a, i) { return a + i.usd; }, 0);
+      var left = C.budget_usd - spent;
+      items.push({label: 'Left over', usd: Math.max(left, 0), kind: 'remaining',
+        how: left >= 0 ? 'What remains of your budget for anything else.' : 'Nothing — the items above exceed your budget.'});
+
+      card.textContent = '';
+      var max = Math.max.apply(null, items.map(function (i) { return i.usd; }).concat([1]));
+      items.forEach(function (it) {
+        var wrap = mk('div', 'tp-cost-item'), row = mk('div', 'tp-budget-row');
+        row.appendChild(mk('span', 'tp-budget-label', it.label));
+        row.appendChild(mk('span', 'tp-cost-kind kind-' + it.kind, KIND[it.kind] || it.kind));
+        var track = mk('div', 'tp-budget-track'), fill = mk('div', 'tp-budget-fill');
+        fill.style.width = (it.usd / max * 100).toFixed(1) + '%'; track.appendChild(fill); row.appendChild(track);
+        row.appendChild(mk('span', 'tp-budget-amt', money(it.usd)));
+        wrap.appendChild(row); wrap.appendChild(mk('div', 'tp-cost-how', it.how));
+        card.appendChild(wrap);
+      });
+      var tot = mk('div', 'tp-kv');
+      tot.style.cssText = 'margin-top:10px;border-top:1px solid var(--tp-border);padding-top:10px';
+      tot.appendChild(mk('span', null, 'Total trip cost'));
+      tot.appendChild(mk('span', null, money(spent) + ' of ' + money(C.budget_usd) + ' · ' + C.nights + ' night(s) · ' + people + ' in ' + C.rooms + ' room' + (C.rooms === 1 ? '' : 's')));
+      card.appendChild(tot);
+      if (left < 0) card.appendChild(mk('div', 'tp-budget-warn', '⚠️ Over your budget by ' + money(-left) + '. Pick cheaper flights or a cheaper hotel, or drop a leg.'));
+
+      var ovT = document.getElementById('tp-ov-total'), ovP = document.getElementById('tp-ov-pill');
+      if (ovT) ovT.textContent = money(spent);
+      if (ovP) { ovP.textContent = ''; ovP.appendChild(mk('span', 'tp-pill ' + (left < 0 ? 'bad' : 'good'), left < 0 ? 'Over by ' + money(-left) : 'Within budget')); }
+    };
+
+    document.addEventListener('change', function (e) {
+      if (e.target.matches('input[name^="tp-pick-"]')) window.tpRecalc();
+    });
+    document.addEventListener('input', function (e) {
+      if (e.target.closest && e.target.closest('.tp-fee')) window.tpRecalc();
+    });
+    window.tpRecalc();
+  }
 
   // ---- booking redirect confirmation - shared by flight (booking.py's real
   // ixigo/MakeMyTrip/Goibibo deep links) and hotel (real Foursquare website) buttons ----

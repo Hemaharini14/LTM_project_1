@@ -375,12 +375,15 @@ def flight_details(fid: str) -> dict:
 
 
 def optional_fare(f: dict) -> dict | None:
-    """Real Google Flights fare via the existing SerpApi integration (quota-capped,
-    disk-cached). Aviationstack carries no prices, so this is the only source."""
+    """Real fare from Ignav - this exact flight when Ignav lists it, otherwise the
+    cheapest on the route that day (SerpApi only if Ignav is unavailable).
+    Aviationstack carries no prices."""
     try:
-        from serpapi_prices import real_flight_price
+        from ignav_prices import price_for_flight, real_flight_price
         day = (f.get("scheduled_departure") or "")[:10]
-        return real_flight_price(f["origin_iata"], f["destination_iata"], day, adults=1)
+        code = f.get("flight_iata") or f"{f.get('airline_iata') or ''}{f.get('flight_number') or ''}"
+        return (price_for_flight(f["origin_iata"], f["destination_iata"], day, code, adults=1)
+                or real_flight_price(f["origin_iata"], f["destination_iata"], day, adults=1))
     except Exception as e:
         print(f"[flight_search] fare lookup skipped: {e}")
         return None

@@ -122,7 +122,7 @@
       <span class="risk-label">{{ result.label }} risk</span>
     </div>
     {% if result.real_price %}
-    <p class="dataset-note">Real price today (Google Flights): <strong>{{ result.real_price.price_usd | money }}</strong>
+    <p class="dataset-note">Real price today ({{ result.real_price.source_label or 'live fare' }}{% if result.real_price.same_flight %}, this exact flight{% else %}, cheapest on this route{% endif %}): <strong>{{ result.real_price.price_usd | money }}</strong>
       ({{ result.real_price.airline }}{% if result.real_price.stops == 0 %}, nonstop{% elif result.real_price.stops %}, {{ result.real_price.stops }} stop{{ 's' if result.real_price.stops != 1 }}{% endif %})
       {%- if result.real_price.departure_time %}, real scheduled {{ result.real_price.departure_time[-5:] }} → {{ result.real_price.arrival_time[-5:] }}{% endif %}.</p>
     {% endif %}

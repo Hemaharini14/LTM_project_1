@@ -36,7 +36,8 @@ from opensky import (bbox_for_route, callsign_for, live_rotation, live_traffic,
 from aviationstack import flight_now
 from weather_live import airport_weather
 from booking import describe_party, links_for_flight
-from serpapi_prices import real_flight_price, real_hotel_prices
+from serpapi_prices import real_hotel_prices
+from ignav_prices import real_flight_price, one_way_options, price_for_flight
 from recovery_graph import build_graph
 from recovery_tools import get_dataset_index, is_route_covered, lookup_flight_by_number
 from trip_planner import plan_budget_trip
@@ -593,7 +594,12 @@ def flight_delay():
                 # real usage during testing/a demo) - watch data/serpapi_usage.json
                 # if checks of many different routes start happening often.
                 try:
-                    result["real_price"] = real_flight_price(
+                    exact = None
+                    if inputs.get("flight_number") and inputs.get("carrier_code"):
+                        exact = price_for_flight(
+                            inputs["origin_airport"], inputs["destination_airport"], travel_date,
+                            f"{inputs['carrier_code']}{inputs['flight_number']}", adults=1)
+                    result["real_price"] = exact or real_flight_price(
                         inputs["origin_airport"], inputs["destination_airport"],
                         travel_date, adults=1)
                 except Exception as e:
@@ -715,7 +721,7 @@ def flight_alternatives():
 def _cost_breakdown(plan: dict, inputs: dict) -> dict:
     """Line-by-line cost of the trip, each line saying what KIND of number it is:
 
-      real       a live market price (Google Flights / Google Hotels via SerpApi)
+      real       a live market price (flights: Ignav; hotels: Google Hotels via SerpApi)
       dataset    a median from the hotel-bookings dataset the optimiser uses
       allowance  a share of YOUR budget set aside - not a price anyone quoted
       remaining  whatever is left after the lines above
@@ -748,7 +754,8 @@ def _cost_breakdown(plan: dict, inputs: dict) -> dict:
                 legs += fare["price_usd"]
                 parts.append(f"{m(fare['price_usd'])} {name} ({fare.get('airline') or 'cheapest'}, "
                              f"{m(fare['price_usd'] / t)} each)")
-        how = " + ".join(parts) + f" for {people}. Cheapest Google Flights fares today, all passengers included."
+        src = (ob or rt).get("source_label") or "live fares"
+        how = " + ".join(parts) + f" for {people}. Cheapest fares today ({src}), all passengers included."
         if not (ob and rt):
             how += f" The {'return' if ob else 'outbound'} fare wasn't available, so it is NOT included."
         items.append({"label": "Flights", "usd": round(legs, 2), "kind": "real", "how": how})
@@ -764,6 +771,7 @@ def _cost_breakdown(plan: dict, inputs: dict) -> dict:
         # Live rates for the actual destination, picked to match the stay-comfort
         # level: cheapest for Budget, the middle option for Standard, the top for Luxury.
         pick = real[0] if stay == "budget" else real[-1] if stay == "luxury" else real[len(real) // 2]
+        plan["default_hotel_name"] = pick["name"]
         usd = round(pick["nightly_rate_usd"] * nights * rooms, 2)
         which = {"budget": "cheapest", "luxury": "highest-priced"}.get(stay, "middle")
         items.append({"label": "Hotel", "usd": usd, "kind": "real",
@@ -794,7 +802,18 @@ def _cost_breakdown(plan: dict, inputs: dict) -> dict:
                           f"{m(left / max(days * t, 1))} per person per day. It is not a cost estimate - "
                           f"spend it on entry tickets, activities or shopping.") if left >= 0 else
                          "Nothing is left: the lines above already exceed your budget."})
-    return {"items": items, "total_usd": spent + max(left, 0.0), "budget_usd": total,
+    rates = currency_utils.get_rates()
+    disp = cur if (cur == "USD" or cur in rates) else "USD"
+    calc = {   # everything the page needs to re-price the trip as the traveller picks
+        "budget_usd": total, "travelers": t, "nights": nights, "rooms": rooms, "days": days,
+        "currency": {"code": disp, "symbol": currency_utils.SUPPORTED_CURRENCIES[disp]["symbol"],
+                     "rate": rates.get(disp, 1.0)},
+        "fixed": [i for i in items if i["label"] in ("Food", "Local transport")],
+        # used when the page has nothing to pick for that line (no priced flights / no live hotels)
+        "server_flight": next((i for i in items if i["label"] == "Flights"), None),
+        "server_hotel": next((i for i in items if i["label"] == "Hotel"), None),
+    }
+    return {"items": items, "calc": calc, "total_usd": spent + max(left, 0.0), "budget_usd": total,
             "over_budget_usd": -left if left < 0 else 0.0}
 
 
@@ -889,7 +908,7 @@ def budget_trip():
                     print(f"[api] booking link skipped for {f.get('route')}: {e}")
                     f["booking"] = []
 
-        # Real market prices (SerpApi -> Google Flights/Hotels) - the one real
+        # Real market prices (Ignav for flights, SerpApi for hotels) - the real
         # price source anywhere in this project. Quota-guarded (see
         # serpapi_prices.py); None/[] when the key/quota/lookup isn't
         # available, same as every other optional enrichment here, so the page
@@ -899,21 +918,21 @@ def budget_trip():
         # the nearest airport itself; the fare lookup must use that, not the blank field.
         if not inputs["destination_airport"] and plan.get("auto_resolved_destination_airport"):
             inputs["destination_airport"] = plan["auto_resolved_destination_airport"]
-        if plan.get("route_covered") or plan.get("route_reference"):
-            try:
-                plan["real_outbound_price"] = real_flight_price(
-                    inputs["origin_airport"], inputs["destination_airport"],
-                    inputs["start_date"], adults=inputs["travelers"])
-            except Exception as e:
-                print(f"[api] real flight price skipped: {e}")
-                plan["real_outbound_price"] = None
-            try:
-                plan["real_return_price"] = real_flight_price(
-                    inputs["destination_airport"], inputs["origin_airport"],
-                    inputs["return_date"], adults=inputs["travelers"])
-            except Exception as e:
-                print(f"[api] real return price skipped: {e}")
-                plan["real_return_price"] = None
+        plan["flight_options"] = {"outbound": [], "return": []}
+        plan["leg_dates"] = {"outbound": inputs["start_date"], "return": inputs["return_date"]}
+        if inputs["origin_airport"] and inputs["destination_airport"] and \
+                (not inputs.get("transport_mode") or inputs["transport_mode"] == "flight"):
+            for leg, a, b, day in (("outbound", inputs["origin_airport"], inputs["destination_airport"], inputs["start_date"]),
+                                   ("return", inputs["destination_airport"], inputs["origin_airport"], inputs["return_date"])):
+                try:
+                    plan["flight_options"][leg] = one_way_options(a, b, day, adults=inputs["travelers"], limit=8) or []
+                except Exception as e:
+                    print(f"[api] {leg} flight options skipped: {e}")
+            # Cheapest real option per leg (Ignav; SerpApi only if Ignav is unavailable).
+            plan["real_outbound_price"] = (plan["flight_options"]["outbound"][:1] or [None])[0] or real_flight_price(
+                inputs["origin_airport"], inputs["destination_airport"], inputs["start_date"], adults=inputs["travelers"])
+            plan["real_return_price"] = (plan["flight_options"]["return"][:1] or [None])[0] or real_flight_price(
+                inputs["destination_airport"], inputs["origin_airport"], inputs["return_date"], adults=inputs["travelers"])
         try:
             plan["real_priced_hotels"] = real_hotel_prices(
                 inputs["destination_city"] or inputs["destination_place"],
@@ -1242,8 +1261,9 @@ def _with_display_fare(flight: dict) -> dict:
         "display": currency_utils.format_money(
             fare["price_usd"], session.get("currency", currency_utils.DEFAULT_CURRENCY)),
         "airline": fare.get("airline"), "stops": fare.get("stops"),
-        "source": "Google Flights via SerpApi (cheapest option on this route and date, per adult)",
-        "same_flight": False,
+        "source": (f"{fare.get('source_label', 'Live fare')}: this exact flight, 1 adult" if fare.get("same_flight")
+                   else f"{fare.get('source_label', 'Live fare')}: cheapest option on this route and date, 1 adult"),
+        "same_flight": bool(fare.get("same_flight")),
     } if fare else None)
     return flight
 
