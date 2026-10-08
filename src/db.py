@@ -17,7 +17,7 @@ import json
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app_data.db")
+DB_PATH = os.environ.get("APP_DB_PATH") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app_data.db")
 
 
 def get_db():
