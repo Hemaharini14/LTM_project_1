@@ -81,7 +81,7 @@ def llm_status() -> dict:
     return {"configured": get_llm() is not None, "provider": provider or None, "key_present": key_present}
 
 
-def _narration_digest(inputs: dict, plan: dict) -> dict:
+def _narration_digest(inputs: dict, plan: dict, money=None) -> dict:
     """The few dozen numbers a 120-word summary can actually use.
 
     Keeps the top option from each list rather than every option, and the
@@ -91,6 +91,27 @@ def _narration_digest(inputs: dict, plan: dict) -> dict:
     def top(key, fields):
         rows = plan.get(key) or []
         return {f: rows[0].get(f) for f in fields if f in rows[0]} if rows else None
+
+    cb = plan.get("cost_breakdown")
+    if money and cb:
+        # Amounts arrive already written in the traveller's currency, from the same
+        # line items the page shows, so the summary can't drift into dollars or
+        # into the optimiser's older budget split.
+        fit = cb.get("fit") or {}
+        return {
+            "trip": {"to": inputs.get("destination_city") or inputs.get("destination_airport"),
+                     "from": inputs.get("origin_place") or inputs.get("origin_airport"),
+                     "days": inputs.get("days"), "nights": plan.get("nights"),
+                     "travelers": plan.get("travelers"), "travel_mode": inputs.get("transport_mode") or "flight",
+                     "budget": money(cb["budget_usd"])},
+            "costs": [{"item": i["label"], "amount": money(i["usd"]), "type": i["kind"]} for i in cb["items"]],
+            "total": money(cb["total_usd"]),
+            "within_budget": bool(fit.get("fits")),
+            "cheapest_possible_total": money(fit["minimum_usd"]) if fit.get("minimum_usd") else None,
+            "hotel": plan.get("default_hotel_name"),
+            "counts": {"sightseeing_well_known": len(plan.get("sightseeing_common") or []),
+                       "sightseeing_lesser_known": len(plan.get("sightseeing_hidden") or [])},
+        }
 
     return {
         "trip": {
@@ -116,7 +137,7 @@ def _narration_digest(inputs: dict, plan: dict) -> dict:
     }
 
 
-def narrate_trip_plan(inputs: dict, plan: dict) -> tuple[str, str]:
+def narrate_trip_plan(inputs: dict, plan: dict, money=None) -> tuple[str, str]:
     """Returns (narrative_text, mode) for the budget trip planner, mirroring
     recovery_graph.py's grounded-narration pattern (real data in, narration out)."""
     llm = get_llm()
@@ -124,9 +145,21 @@ def narrate_trip_plan(inputs: dict, plan: dict) -> tuple[str, str]:
     best_ret = plan["return_flights"][0] if plan.get("return_flights") else None
     best_hotel = plan["hotel_options"][0] if plan.get("hotel_options") else None
 
+    fmt = money or (lambda usd: f"${usd:,.0f}")
+    cb = plan.get("cost_breakdown")
+
     def deterministic() -> str:
+        if cb:
+            parts = [f"{inputs.get('days')}-day trip to {inputs.get('destination_city') or inputs.get('destination_airport')} "
+                     f"by {inputs.get('transport_mode') or 'flight'}, budget {fmt(cb['budget_usd'])}."]
+            parts += [f"{i['label']}: {fmt(i['usd'])}." for i in cb["items"] if i["usd"]]
+            fit = cb.get("fit") or {}
+            parts.append("This fits your budget." if fit.get("fits") else
+                         f"This exceeds your budget; the cheapest possible version is about {fmt(fit['minimum_usd'])}."
+                         if fit.get("minimum_usd") else "This exceeds your budget.")
+            return " ".join(parts)
         parts = [f"Trip from {inputs['origin_airport']} to {inputs['destination_airport']}, "
-                 f"{inputs['days']} day(s), budget ${inputs['total_budget']:.0f}."]
+                 f"{inputs['days']} day(s), budget {fmt(inputs['total_budget'])}."]
         if best_out:
             parts.append(f"Outbound: {best_out['carrier']} {best_out['flight_number']} "
                          f"({best_out['risk_label'].lower()} delay risk).")
@@ -134,9 +167,9 @@ def narrate_trip_plan(inputs: dict, plan: dict) -> tuple[str, str]:
             parts.append(f"Return: {best_ret['carrier']} {best_ret['flight_number']} "
                          f"({best_ret['risk_label'].lower()} delay risk).")
         if best_hotel:
-            parts.append(f"Stay: {best_hotel['hotel_type']} tier, ~${best_hotel['median_nightly_rate_usd']}/night.")
+            parts.append(f"Stay: {best_hotel['hotel_type']} tier, ~{fmt(best_hotel['median_nightly_rate_usd'])}/night.")
         parts.append(f"Budget split across flight/hotel/food/transport/sightseeing totals "
-                     f"${plan['budget_breakdown']['total']:.0f}.")
+                     f"{fmt(plan['budget_breakdown']['total'])}.")
         return " ".join(parts)
 
     if llm is None:
@@ -145,13 +178,16 @@ def narrate_trip_plan(inputs: dict, plan: dict) -> tuple[str, str]:
     from langchain_core.messages import SystemMessage, HumanMessage
     system = ("You are a travel planning assistant. Summarize this trip plan and explain the "
               "reasoning behind the budget split in under 120 words, using ONLY the data given "
-              "below. Do not invent flights, hotels, prices, or points of interest beyond what's given.")
+              "below. Do not invent flights, hotels, prices, or points of interest beyond what's given. "
+              "Every amount is already written in the traveller's currency - quote amounts exactly "
+              "as given, with their currency symbol, and never convert them or write them in dollars. "
+              "Mention only the travel mode given (do not talk about flights if the mode is car).")
     # Send a digest, not the plan. Serialised whole, a plan runs to several
     # thousand tokens - most of it sightseeing lists and per-day itineraries the
     # summary never mentions - and on an 8,000 tokens-per-minute tier a single
     # narration could exceed the entire minute's budget on its own and come back
     # 429. Everything the summary can actually talk about is here.
-    human = json.dumps(_narration_digest(inputs, plan), default=str)
+    human = json.dumps(_narration_digest(inputs, plan, money), default=str, ensure_ascii=False)
     try:
         result = llm.invoke([SystemMessage(content=system), HumanMessage(content=human)])
         return result.content, f"LLM ({os.getenv('LLM_PROVIDER')})"

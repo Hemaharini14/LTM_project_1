@@ -34,8 +34,12 @@ from intl_reference import INTL_AIRPORT_CODES, get_reference_flights
 # Named, auditable assumptions behind the car cost estimate. These are NOT looked
 # up from any dataset - change them to match local fuel prices. Anything derived
 # from them is reported as an estimate with its basis attached, never as a price.
-FUEL_LITRES_PER_100KM = 7.5
-FUEL_COST_PER_LITRE_USD = 1.20
+FUEL_LITRES_PER_100KM = float(os.environ.get("FUEL_LITRES_PER_100KM", "7.5"))
+# About ₹100/L petrol in India at ~₹97/$ (Oct 2026). Set FUEL_COST_PER_LITRE_USD
+# in .env for another country or a different price; it is shown in the cost basis.
+FUEL_COST_PER_LITRE_USD = float(os.environ.get("FUEL_COST_PER_LITRE_USD", "1.05"))
+# A car carries up to this many travellers; bigger groups need more cars.
+SEATS_PER_CAR = int(os.environ.get("SEATS_PER_CAR", "5"))
 
 
 def _car_option(origin_geo: dict, dest_geo: dict) -> dict:

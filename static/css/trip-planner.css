@@ -236,3 +236,4 @@
 .tp-fee input { padding: 6px 10px; border-radius: 8px; font-size: 13px; }
 .kind-picked { background: rgba(52,211,153,0.14); color: #6ee7b7; }
 .kind-entered { background: rgba(167,139,250,0.15); color: #c4b5fd; }
+.kind-estimate { background: rgba(96,165,250,0.14); color: #93c5fd; }

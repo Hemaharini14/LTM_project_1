@@ -205,5 +205,28 @@ def test_impossible_budget_reports_the_real_minimum():
         cb = appmod._cost_breakdown(plan, {"total_budget": 45.0, "travelers": 1, "days": 3,
                                            "stay_comfort": "standard"})
     assert cb["fit"]["possible"] is False
-    assert cb["fit"]["minimum_usd"] == 120 + 110 + 8 + 8
+    # flights 230 + cheapest hotel 8; food/transport are shares of what is left after
+    # travel, and travel alone already exceeds the 45 budget, so they add nothing
+    assert cb["fit"]["minimum_usd"] == 120 + 110 + 8
     assert plan["default_hotel_name"] == "Cheap"
+
+
+
+def test_car_trip_costs_the_drive_and_reserves_nothing_for_flights():
+    import api as appmod
+    plan = {"nights": 2, "rooms": 1, "travelers": 2, "budget_breakdown": {},
+            "selected_transport": {"mode": "car", "available": True, "distance_km": 500,
+                                   "duration_hours": 8, "estimated_cost_usd": 40.0},
+            "real_priced_hotels": [{"name": "H", "nightly_rate_usd": 20.0}]}
+    inputs = {"total_budget": 300.0, "travelers": 2, "days": 3, "transport_mode": "car",
+              "stay_comfort": "budget", "food_comfort": "standard", "travel_comfort": "standard"}
+    with appmod.app.test_request_context():
+        appmod.session["currency"] = "USD"
+        cb = appmod._cost_breakdown(plan, inputs)
+    labels = [i["label"] for i in cb["items"]]
+    assert "Flights" not in labels and labels[0] == "Car (fuel)"
+    car = cb["items"][0]
+    assert car["usd"] == 80.0, "fuel there and back"
+    food = next(i for i in cb["items"] if i["label"] == "Food")
+    assert food["usd"] == (300 - 80) * appmod.FOOD_SHARE_OF_REMAINING
+    assert cb["fit"]["fits"]

@@ -718,9 +718,29 @@ def flight_alternatives():
 
 # ---------------------------------------------------------------- budget trip planner
 
-def _fixed_allowances_usd(plan: dict, inputs: dict) -> float:
-    bb = plan.get("budget_breakdown") or {}
-    return (bb.get("food_cost") or 0.0) + (bb.get("transport_cost") or 0.0)
+def _car_trip(plan: dict, inputs: dict) -> dict | None:
+    """Round-trip fuel for the drive the traveller chose: real road distance
+    (Geoapify) × 2 × consumption × fuel price × cars needed. None unless the car
+    was chosen and a route exists."""
+    st = plan.get("selected_transport") or {}
+    if inputs.get("transport_mode") != "car" or not st.get("available") or st.get("estimated_cost_usd") is None:
+        return None
+    from transport_modes import SEATS_PER_CAR, FUEL_LITRES_PER_100KM, FUEL_COST_PER_LITRE_USD
+    t = max(int(inputs.get("travelers") or 1), 1)
+    cars = -(-t // SEATS_PER_CAR)
+    return {"usd": st["estimated_cost_usd"] * 2 * cars, "one_way_usd": st["estimated_cost_usd"],
+            "km": st.get("distance_km"), "hours": st.get("duration_hours"), "cars": cars,
+            "l_per_100": FUEL_LITRES_PER_100KM, "per_litre_usd": FUEL_COST_PER_LITRE_USD}
+
+
+def _main_travel_usd(plan: dict, inputs: dict) -> float | None:
+    """What getting there and back costs for the chosen mode: the car's fuel, or the
+    cheapest real flights. None if it is unknown (no fare / no route)."""
+    if inputs.get("transport_mode") == "car":
+        car = _car_trip(plan, inputs)
+        return car["usd"] if car else None
+    legs = [plan.get("real_outbound_price"), plan.get("real_return_price")]
+    return sum(f["price_usd"] for f in legs if f) if any(legs) else None
 
 
 def _cheapest_flights_usd(plan: dict) -> float | None:
@@ -728,16 +748,38 @@ def _cheapest_flights_usd(plan: dict) -> float | None:
     return sum(f["price_usd"] for f in legs if f) if any(legs) else None
 
 
+# Shares of the money left AFTER getting there and back. Food is weighted well
+# above local transport, and whatever the hotel and these two don't use is left
+# for sightseeing - so a cheap drive puts the savings into stay, food and sights
+# instead of reserving a flight's share of the budget nobody is spending.
+FOOD_SHARE_OF_REMAINING = 0.25
+LOCAL_SHARE_OF_REMAINING = 0.10
+
+
+def _allowances_usd(plan: dict, inputs: dict) -> tuple[float, float]:
+    """(food, local transport) allowances - see the shares above."""
+    from trip_planner import LEVEL_MULTIPLIER
+    travel = _main_travel_usd(plan, inputs)
+    base = max(inputs["total_budget"] - (travel or 0.0), 0.0) if travel is not None else inputs["total_budget"] * 0.8
+    food = base * FOOD_SHARE_OF_REMAINING * LEVEL_MULTIPLIER.get(inputs.get("food_comfort") or "standard", 1.0)
+    local = base * LOCAL_SHARE_OF_REMAINING * LEVEL_MULTIPLIER.get(inputs.get("travel_comfort") or "standard", 1.0)
+    return food, local
+
+
+def _fixed_allowances_usd(plan: dict, inputs: dict) -> float:
+    return sum(_allowances_usd(plan, inputs))
+
+
 def _hotel_room_night_cap(plan: dict, inputs: dict) -> float | None:
     """The most one room can cost per night and still keep the trip within budget,
     after the cheapest flights and the food/transport allowances. None if no fare
     is known (then the budget can't be split honestly); 0 if nothing is left."""
-    flights = _cheapest_flights_usd(plan)
-    if flights is None:
+    travel = _main_travel_usd(plan, inputs)
+    if travel is None:
         return None
     nights = plan.get("nights") or 1
     rooms = plan.get("rooms") or 1
-    left = inputs["total_budget"] - flights - _fixed_allowances_usd(plan, inputs)
+    left = inputs["total_budget"] - travel - _fixed_allowances_usd(plan, inputs)
     return max(left, 0.0) / (nights * rooms)
 
 
@@ -767,7 +809,21 @@ def _cost_breakdown(plan: dict, inputs: dict) -> dict:
     items = []
 
     ob, rt = plan.get("real_outbound_price"), plan.get("real_return_price")
-    if ob or rt:
+    car = _car_trip(plan, inputs)
+    if inputs.get("transport_mode") == "car":
+        if car:
+            items.append({"label": "Car (fuel)", "usd": car["usd"], "kind": "estimate",
+                          "how": f"{car['km']:,.0f} km each way (real road route, ~{car['hours']:g} h) × 2 for the "
+                                 f"return = {car['km'] * 2:,.0f} km × {car['l_per_100']:g} L/100km × "
+                                 f"{m(car['per_litre_usd'])}/L" + (f" × {car['cars']} cars" if car['cars'] > 1 else "")
+                                 + ". Fuel only - tolls and parking not included."})
+        else:
+            items.append({"label": "Car (fuel)", "usd": 0.0, "kind": "estimate",
+                          "how": "No drivable route was found, so the drive could not be costed."})
+    elif inputs.get("transport_mode") and inputs["transport_mode"] != "flight":
+        items.append({"label": "Travel", "usd": 0.0, "kind": "estimate",
+                      "how": f"No fare source exists for {inputs['transport_mode']}, so it is not costed here."})
+    elif ob or rt:
         legs, parts = 0.0, []
         for name, fare in (("outbound", ob), ("return", rt)):
             if fare:
@@ -807,7 +863,7 @@ def _cost_breakdown(plan: dict, inputs: dict) -> dict:
                    + (f" (up to {m(cap)}/room/night)" if cap is not None else ""))
         else:
             why = (f"the cheapest live hotel found - none fit your budget, which leaves "
-                   f"{m(cap or 0)}/room/night after flights and allowances")
+                   f"{m(cap or 0)}/room/night after travel and allowances")
         items.append({"label": "Hotel", "usd": usd, "kind": "real",
                       "how": f"{pick['name']}: {m(pick['nightly_rate_usd'])}/night ({why}; Google Hotels) × {nights} "
                              f"night{'s' if nights != 1 else ''} × {rooms} room{'s' if rooms != 1 else ''} (2 people per room)."})
@@ -818,13 +874,15 @@ def _cost_breakdown(plan: dict, inputs: dict) -> dict:
                              f"available, so this is the median {hotel.get('hotel_type', '').lower()} rate from a public "
                              f"hotel-bookings dataset (hotels in Portugal) - NOT a rate for your destination."})
 
-    for label, key, share, comfort in (("Food", "food_cost", FOOD_SHARE, inputs.get("food_comfort")),
-                                       ("Local transport", "transport_cost", TRANSPORT_SHARE,
+    food_usd, local_usd = _allowances_usd(plan, inputs)
+    travel_known = _main_travel_usd(plan, inputs)
+    base_txt = ("of what's left after getting there" if travel_known is not None else "of 80% of your budget")
+    for label, usd, share, comfort in (("Food", food_usd, int(FOOD_SHARE_OF_REMAINING * 100), inputs.get("food_comfort")),
+                                       ("Local transport", local_usd, int(LOCAL_SHARE_OF_REMAINING * 100),
                                         inputs.get("travel_comfort"))):
-        usd = bb.get(key) or 0.0
         mult = LEVEL_MULTIPLIER.get(comfort or "standard", 1.0)
         items.append({"label": label, "usd": usd, "kind": "allowance",
-                      "how": f"{int(share * 100)}% of your budget × {mult:g} ({(comfort or 'standard').title()} level) "
+                      "how": f"{share}% {base_txt} × {mult:g} ({(comfort or 'standard').title()} level) "
                              f"= {m(usd / max(days * t, 1))} per person per day for {days} days. "
                              f"An allowance, not quoted prices."})
 
@@ -837,7 +895,7 @@ def _cost_breakdown(plan: dict, inputs: dict) -> dict:
                          "Nothing is left: the lines above already exceed your budget."})
     # The least this trip can cost with real prices: cheapest flights + cheapest
     # hotel + the allowances. If that exceeds the budget, no choice of picks fits.
-    min_flights = _cheapest_flights_usd(plan)
+    min_flights = _main_travel_usd(plan, inputs)
     min_hotel = (real[0]["nightly_rate_usd"] * nights * rooms) if real else None
     minimum = None
     if min_flights is not None and min_hotel is not None:
@@ -854,7 +912,7 @@ def _cost_breakdown(plan: dict, inputs: dict) -> dict:
                      "rate": rates.get(disp, 1.0)},
         "fixed": [i for i in items if i["label"] in ("Food", "Local transport")],
         # used when the page has nothing to pick for that line (no priced flights / no live hotels)
-        "server_flight": next((i for i in items if i["label"] == "Flights"), None),
+        "server_flight": next((i for i in items if i["label"] in ("Flights", "Car (fuel)", "Travel")), None),
         "server_hotel": next((i for i in items if i["label"] == "Hotel"), None),
     }
     return {"items": items, "calc": calc, "fit": fit, "total_usd": spent + max(left, 0.0), "budget_usd": total,
@@ -962,6 +1020,17 @@ def budget_trip():
         # the nearest airport itself; the fare lookup must use that, not the blank field.
         if not inputs["destination_airport"] and plan.get("auto_resolved_destination_airport"):
             inputs["destination_airport"] = plan["auto_resolved_destination_airport"]
+        plan["transport_mode"] = inputs["transport_mode"]
+        # Real numbers for the mode actually chosen, so a traveller who picked the
+        # car sees their drive rather than flights they never asked for - and so the
+        # budget is split around the car's cost, not a flight's.
+        if inputs["transport_mode"] and inputs["origin_place"] and inputs["destination_place"]:
+            try:
+                plan["selected_transport"] = describe_mode(
+                    inputs["origin_place"], inputs["destination_place"],
+                    inputs["transport_mode"], start_date.weekday())
+            except Exception as e:
+                print(f"[api] selected transport skipped: {e}")
         plan["flight_options"] = {"outbound": [], "return": []}
         plan["leg_dates"] = {"outbound": inputs["start_date"], "return": inputs["return_date"]}
         if inputs["origin_airport"] and inputs["destination_airport"] and \
@@ -1003,17 +1072,11 @@ def budget_trip():
             plan["cost_breakdown"] = _cost_breakdown(plan, inputs)
         except Exception as e:
             print(f"[api] cost breakdown skipped: {e}")
-
-        plan["transport_mode"] = inputs["transport_mode"]
-        # Real numbers for the mode actually chosen, so a traveller who picked the
-        # car sees their drive rather than flights they never asked for.
-        if inputs["transport_mode"] and inputs["origin_place"] and inputs["destination_place"]:
-            plan["selected_transport"] = describe_mode(
-                inputs["origin_place"], inputs["destination_place"],
-                inputs["transport_mode"], start_date.weekday())
         if plan.get("auto_resolved_destination_airport"):
             inputs["destination_airport"] = plan["auto_resolved_destination_airport"]
-        narrative, mode = narrate_trip_plan(inputs, plan)
+        narrative, mode = narrate_trip_plan(
+            inputs, plan, money=lambda usd: currency_utils.format_money(
+                usd, session.get("currency", currency_utils.DEFAULT_CURRENCY)))
         plan["recommendation_text"] = narrative
         plan["recommendation_mode"] = mode
         db.save_budget_trip(session["user_id"], inputs, plan)

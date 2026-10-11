@@ -175,9 +175,8 @@
 <div class="tp-budget-warn" style="margin:0 0 16px">
   ⚠️ <strong>{{ plan.cost_breakdown.budget_usd | money }} can't cover this trip at today's real prices.</strong>
   The cheapest possible version costs about <strong>{{ fit.minimum_usd | money }}</strong>:
-  cheapest flights {{ fit.min_flights_usd | money }} + cheapest hotel {{ fit.min_hotel_usd | money }}
-  + food &amp; local transport allowances. Raise the budget to at least that, travel fewer people or nights,
-  or pick “I'll arrange this leg myself” for a flight below.
+  {{ 'fuel for the drive' if plan.transport_mode == 'car' else 'cheapest flights' }} {{ fit.min_flights_usd | money }} + cheapest hotel {{ fit.min_hotel_usd | money }}
+  + food &amp; local transport allowances. Raise the budget to at least that, or travel fewer people or nights{% if plan.transport_mode == 'car' %}, or choose a closer destination{% else %}, or pick “I'll arrange this leg myself” for a flight below{% endif %}.
 </div>
 {% endif %}
 {% if plan.route_reference %}
@@ -192,6 +191,21 @@
 <!-- ============================== OVERVIEW CARDS ============================== -->
 <section class="tp-section">
   <div class="tp-overview-grid">
+    {% if plan.transport_mode == 'car' %}
+    <div class="tp-card tp-overview-card">
+      <span class="tp-icon">🚗</span><h3>Car</h3>
+      {% set st = plan.selected_transport %}
+      {% if st and st.available %}
+      <div class="tp-big">{{ '{:,.0f}'.format(st.distance_km) }} km</div>
+      <div class="tp-kv"><span>Drive time</span><span>~{{ st.duration_hours }} h each way</span></div>
+      {% set carline = (plan.cost_breakdown['items'] | selectattr('label', 'equalto', 'Car (fuel)') | list) if plan.cost_breakdown else [] %}
+      {% if carline %}<div class="tp-kv"><span>Fuel, return trip</span><span>{{ carline[0].usd | money }}</span></div>{% endif %}
+      <p class="muted" style="font-size:11.5px;margin-top:8px">Real road route (Geoapify). Fuel only — tolls and parking extra.</p>
+      {% else %}
+      <p class="muted">No drivable route found between these places.</p>
+      {% endif %}
+    </div>
+    {% else %}
     <div class="tp-card tp-overview-card">
       <span class="tp-icon">✈️</span><h3>Flight</h3>
       {% set f = plan.outbound_flights[0] if plan.outbound_flights else None %}
@@ -218,10 +232,22 @@
       <p class="muted">No flight data for this route.</p>
       {% endif %}
     </div>
+    {% endif %}
 
     <div class="tp-card tp-overview-card">
       <span class="tp-icon">🏨</span><h3>Hotel</h3>
-      {% if plan.hotel_options %}
+      {% set chosen = (plan.real_priced_hotels | selectattr('name', 'equalto', plan.default_hotel_name) | list | first) if plan.real_priced_hotels and plan.default_hotel_name else None %}
+      {% if chosen %}
+      <div class="tp-big" style="font-size:1.05rem">{{ chosen.name }}</div>
+      <div class="tp-kv"><span>Rate</span><span>{{ chosen.nightly_rate_usd | money }}/night</span></div>
+      <div class="tp-kv"><span>Total ({{ plan.nights }}n × {{ plan.rooms or 1 }} room{{ 's' if (plan.rooms or 1) != 1 }})</span><span>{{ (chosen.nightly_rate_usd * plan.nights * (plan.rooms or 1)) | money }}</span></div>
+      {% if chosen.rating %}<div class="tp-kv"><span>Rating</span><span>⭐ {{ chosen.rating }}</span></div>{% endif %}
+      {% if chosen.link %}
+      <div class="tp-attraction-actions" style="margin-top:12px">
+        <span class="tp-mini-btn tp-mini-btn-primary" onclick="tpOpenBooking('{{ chosen.name|e }}', '{{ chosen.link|e }}', 'Google Hotels')">🔗 Book {{ chosen.name }}</span>
+      </div>
+      {% endif %}
+      {% elif plan.hotel_options %}
       {% set h = plan.hotel_options[0] %}
       <div class="tp-big">{{ h.median_nightly_rate_usd | money }}/night</div>
       <div class="tp-kv"><span>Total ({{ plan.nights }}n)</span><span>{{ (h.median_nightly_rate_usd * plan.nights * (plan.rooms or 1)) | money }}</span></div>
@@ -278,7 +304,13 @@
   <div class="tp-section-head"><h2>🧠 Trip insights</h2></div>
   <div class="tp-card">
     <div class="tp-insight-list">
-      {% if plan.optimizer_feasible %}
+      {% if plan.cost_breakdown %}
+      {% set fit = plan.cost_breakdown.fit or {} %}
+      <div class="tp-insight"><span class="tp-insight-icon">💰</span><span>
+        {% if fit.fits %}At today's real prices this plan fits your {{ plan.cost_breakdown.budget_usd | money }} budget — see the breakdown below for every line.
+        {% elif fit.minimum_usd %}At today's real prices this trip needs at least {{ fit.minimum_usd | money }}, more than your {{ plan.cost_breakdown.budget_usd | money }} budget.
+        {% else %}At today's prices this plan is over your budget — see the breakdown below.{% endif %}</span></div>
+      {% elif plan.optimizer_feasible %}
       <div class="tp-insight"><span class="tp-insight-icon">💰</span><span>Your planned trip fits inside your budget, with
         {{ (plan.budget_breakdown.total * 0) | money }} spare — {{ plan.combinations_considered }} real flight × hotel
         combinations were checked to find this one.</span></div>
@@ -286,7 +318,7 @@
       <div class="tp-insight"><span class="tp-insight-icon">⚠️</span><span>Even the cheapest real option is
         {{ plan.optimizer_shortfall_usd | money }} over budget — try raising the budget or shortening the trip.</span></div>
       {% endif %}
-      {% if plan.hotel_options %}
+      {% if plan.hotel_options and not plan.real_priced_hotels %}
       <div class="tp-insight"><span class="tp-insight-icon">🏨</span><span>The selected hotel tier keeps
         {{ plan.hotel_options[0].reliability_pct }}% of real past bookings (not cancelled) — a genuine historical reliability figure, not a rating.</span></div>
       {% endif %}
@@ -413,7 +445,8 @@
 <!-- ============================== HOTEL COMPARISON ============================== -->
 <section class="tp-section">
   <div class="tp-section-head"><h2>🏨 Stay</h2><span class="tp-sub">{{ plan.nights }} night{{ 's' if plan.nights != 1 }}</span></div>
-  {% if plan.hotel_options %}
+  {% if plan.hotel_options and not plan.real_priced_hotels %}
+  <p class="dataset-note" style="margin-bottom:10px">No live hotel rates for this destination — these are typical rates from a public hotel-bookings dataset (hotels in Portugal), not rates for your destination.</p>
   <div class="tp-overview-grid">
     {% for h in plan.hotel_options[:3] %}
     <div class="tp-card">
@@ -425,7 +458,7 @@
     </div>
     {% endfor %}
   </div>
-  {% else %}
+  {% elif not plan.real_priced_hotels %}
   <div class="tp-card"><p class="muted">No hotel tier matched this budget — try increasing it.</p></div>
   {% endif %}
 
@@ -555,7 +588,7 @@
     <div class="tp-cost-item">
       <div class="tp-budget-row">
         <span class="tp-budget-label">{{ it.label }}</span>
-        <span class="tp-cost-kind kind-{{ it.kind }}">{{ {'real':'Live price','dataset':'Dataset median','allowance':'Budget allowance','remaining':'Left over'}[it.kind] }}</span>
+        <span class="tp-cost-kind kind-{{ it.kind }}">{{ {'real':'Live price','dataset':'Dataset median','allowance':'Budget allowance','remaining':'Left over','estimate':'Estimate'}[it.kind] }}</span>
         <div class="tp-budget-track"><div class="tp-budget-fill" style="width: {{ ((it.usd / cb.total_usd * 100) if cb.total_usd else 0) | round(1) }}%"></div></div>
         <span class="tp-budget-amt">{{ it.usd | money }}</span>
       </div>
@@ -684,7 +717,7 @@
       var v = usd * (C.currency.rate || 1);
       return C.currency.symbol + v.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
     };
-    var KIND = {real: 'Live price', dataset: 'Dataset median', allowance: 'Budget allowance', remaining: 'Left over',
+    var KIND = {real: 'Live price', dataset: 'Dataset median', allowance: 'Budget allowance', remaining: 'Left over', estimate: 'Estimate',
                 picked: 'Your pick', entered: 'Your entry'};
     var mk = function (tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
     var picked = function (name) { return document.querySelector('input[name="' + name + '"]:checked'); };
