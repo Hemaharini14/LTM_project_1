@@ -934,10 +934,12 @@ def budget_trip():
             plan["real_return_price"] = (plan["flight_options"]["return"][:1] or [None])[0] or real_flight_price(
                 inputs["destination_airport"], inputs["origin_airport"], inputs["return_date"], adults=inputs["travelers"])
         try:
+            # Rates are per ROOM, so ask for the occupancy of one room (2 people, as
+            # the room count assumes) - not the whole party in a single room.
             plan["real_priced_hotels"] = real_hotel_prices(
                 inputs["destination_city"] or inputs["destination_place"],
                 inputs["start_date"], inputs["return_date"],
-                adults=inputs["travelers"])
+                adults=min(inputs["travelers"], 2))
         except Exception as e:
             print(f"[api] real hotel prices skipped: {e}")
             plan["real_priced_hotels"] = []

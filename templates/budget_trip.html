@@ -145,7 +145,7 @@
           <input type="hidden" name="stage" value="plan">
           <input type="hidden" name="transport_mode" value="{{ t.mode }}">
           {% for k in ['origin_place','destination_place','origin_airport','destination_airport',
-                        'destination_city','start_date','days','total_budget','stay_comfort',
+                        'destination_city','start_date','days','travelers','total_budget','stay_comfort',
                         'travel_comfort','food_comfort','sightseeing_level'] %}
           <input type="hidden" name="{{ k }}" value="{{ form_data[k] or '' }}">
           {% endfor %}
@@ -310,6 +310,8 @@
 <section class="tp-section" id="tp-choose-flights">
   <div class="tp-section-head"><h2>✈️ Choose your flights</h2>
     <span class="tp-sub">Real fares today from {{ (plan.flight_options.outbound or plan.flight_options['return'])[0].source_label }} — price is for all {{ plan.travelers or 1 }} traveller{{ 's' if (plan.travelers or 1) != 1 }}. Your pick updates the budget below.</span></div>
+  {% set first_opt = (plan.flight_options.outbound or plan.flight_options['return'])[0] %}
+  {% if first_opt.group_note %}<p class="dataset-note" style="margin:-4px 0 12px">⚠️ {{ first_opt.group_note }}</p>{% endif %}
   <div class="tp-flight-choose">
   {% for leg, label in [('outbound', 'Outbound · ' ~ plan.leg_dates.outbound), ('return', 'Return · ' ~ plan.leg_dates['return'])] %}
     {% set opts = plan.flight_options[leg] %}

@@ -153,3 +153,22 @@ def test_invalid_input_returns_422(client, bad, why):
     assert r.status_code == 422, f"expected 422 for {why}"
     body = r.get_json()
     assert body["details"], "422 should say what was wrong"
+
+
+# ------------------------------------------------------------------ travellers survive the 2-step form
+def test_trip_planner_carries_travellers_from_compare_to_plan(client):
+    """The page is two posts: 'compare' transport modes, then the chosen mode's own
+    form posts 'plan'. Every field must ride along in that second form - travelers
+    was once missing, so every plan silently priced a party of one."""
+    import re
+    with client.session_transaction() as s:
+        s["user_id"] = 1
+        s["user_name"] = "t"
+    first = client.post("/budget-trip", data={
+        "stage": "compare", "origin_place": "Chennai, TN, India", "destination_place": "New Delhi, India",
+        "destination_city": "New Delhi, India", "start_date": "2026-10-22", "days": "3",
+        "travelers": "10", "total_budget": "200000"}).get_data(as_text=True)
+    forms = re.findall(r'<form method="post"[^>]*>(.*?)</form>', first, re.S)
+    plan_forms = [f for f in forms if 'name="stage" value="plan"' in f]
+    assert plan_forms, "the compare step should offer at least one transport mode"
+    assert all('name="travelers" value="10"' in f for f in plan_forms)

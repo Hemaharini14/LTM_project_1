@@ -46,6 +46,10 @@ _USAGE_FILE = _DATA / "ignav_usage.json"
 MONTHLY_CALL_CAP = int(os.environ.get("IGNAV_MONTHLY_CAP", "900"))
 CACHE_TTL_S = float(os.environ.get("IGNAV_CACHE_TTL_S", str(6 * 3600)))
 SOURCE_LABEL = "Ignav"
+# Airlines sell at most 9 seats in one booking, and the fare search enforces it
+# (a 10-adult request is a 400). Bigger groups are priced per seat and scaled - see
+# one_way_options - and every such fare says so.
+MAX_PARTY = 9
 _lock = threading.Lock()
 
 
@@ -117,7 +121,7 @@ def _hhmm(ts: str | None) -> str | None:
     return ts[:16].replace("T", " ") if ts and len(ts) >= 16 else None
 
 
-def _normalise(it: dict, adults: int) -> dict | None:
+def _normalise(it: dict, adults: int, scale: int = 1) -> dict | None:
     price = it.get("price") or {}
     if price.get("amount") is None or (price.get("currency") or "USD") != "USD":
         return None
@@ -127,7 +131,7 @@ def _normalise(it: dict, adults: int) -> dict | None:
         return None
     first, last = segs[0], segs[-1]
     numbers = [f"{s.get('marketing_carrier_code') or ''}{s.get('flight_number') or ''}" for s in segs]
-    total = float(price["amount"])
+    total = float(price["amount"]) * scale
     return {
         "id": it.get("ignav_id"),
         "price_usd": total,                                  # whole party
@@ -148,6 +152,10 @@ def _normalise(it: dict, adults: int) -> dict | None:
         "cabin": it.get("cabin_class"),
         "source": "ignav",
         "source_label": SOURCE_LABEL,
+        "group_scaled": scale > 1,
+        "group_note": (f"Airlines book at most {MAX_PARTY} passengers at once, so this is the 1-seat fare "
+                       f"× {scale}. A real group of {scale} needs 2+ bookings or a group fare, which may differ.")
+                      if scale > 1 else None,
     }
 
 
@@ -158,14 +166,15 @@ def one_way_options(origin: str, destination: str, on: str, adults: int = 1,
     if not (origin and destination and on):
         return None
     adults = max(1, int(adults or 1))
+    asked, scale = (adults, 1) if adults <= MAX_PARTY else (1, adults)
     body = _post("fares/one-way", {
         "origin": origin.upper(), "destination": destination.upper(),
-        "departure_date": str(on)[:10], "adults": adults,
+        "departure_date": str(on)[:10], "adults": asked,
         "cabin_class": "economy", "market": "US",
     })
     if body is None:
         return None
-    rows = [r for r in (_normalise(it, adults) for it in body.get("itineraries") or []) if r]
+    rows = [r for r in (_normalise(it, adults, scale) for it in body.get("itineraries") or []) if r]
     rows.sort(key=lambda r: (r["price_usd"], r["duration_min"] or 0))
     return rows[:limit]
 
@@ -173,7 +182,10 @@ def one_way_options(origin: str, destination: str, on: str, adults: int = 1,
 def _serpapi_fallback(origin, destination, on, adults):
     try:
         from serpapi_prices import real_flight_price as serp
-        fare = serp(origin, destination, on, adults=adults)
+        scale = adults if adults > MAX_PARTY else 1
+        fare = serp(origin, destination, on, adults=1 if scale > 1 else adults)
+        if fare and scale > 1:
+            fare = {**fare, "price_usd": fare["price_usd"] * scale, "group_scaled": True}
     except Exception as e:
         print(f"[ignav] SerpApi fallback skipped: {e}")
         return None

@@ -130,3 +130,11 @@ def test_real_key_not_in_source():
             for f in files:
                 if f.endswith((".py", ".html", ".js")):
                     assert real not in open(os.path.join(root, f), encoding="utf-8", errors="ignore").read()
+
+
+def test_groups_over_nine_are_priced_per_seat_and_flagged(monkeypatch):
+    calls = fake(monkeypatch, {"itineraries": [itin(100, "6E", "2369")]})
+    o = ig.one_way_options("MAA", "DEL", "2026-10-22", adults=10)[0]
+    assert calls[0]["json"]["adults"] == 1, "a 10-adult search is rejected by the API"
+    assert o["price_usd"] == 1000 and o["price_per_person_usd"] == 100
+    assert o["group_scaled"] is True and "9" in o["group_note"]
