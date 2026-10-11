@@ -474,7 +474,8 @@
         {% if loop.first %}<span class="tp-pill tag-best">Cheapest real option</span>{% endif %}
         <h4 style="margin-top:6px">{{ h.name }}</h4>
         <label class="tp-hotel-pick"><input type="radio" name="tp-pick-hotel" data-usd="{{ h.nightly_rate_usd }}"
-               data-label="{{ h.name }}" {{ 'checked' if h.name == plan.default_hotel_name }}> Stay here</label>
+               data-label="{{ h.name }}" data-lat="{{ h.lat or '' }}" data-lon="{{ h.lon or '' }}"
+               {{ 'checked' if h.name == plan.default_hotel_name }}> Stay here</label>
         <div class="tp-kv"><span>Rate</span><span>{{ h.nightly_rate_usd | money }}/night</span></div>
         {% if h.total_rate_usd %}<div class="tp-kv"><span>Total{% if (plan.rooms or 1) > 1 %} ({{ plan.rooms }} rooms){% endif %}</span><span>{{ (h.total_rate_usd * (plan.rooms or 1)) | money }}</span></div>{% endif %}
         {% if h.rating %}<div class="tp-kv"><span>Rating</span><span>⭐ {{ h.rating }}{% if h.reviews %} ({{ h.reviews }}){% endif %}</span></div>{% endif %}
@@ -519,7 +520,8 @@
   <div class="tp-section-head"><h2>⭐ Must-visit places</h2><span class="tp-sub">Real places (Geoapify) — "well-known" means it has a real Wikipedia/Wikidata entry</span></div>
   <div class="tp-attraction-grid" id="tp-common-spots">
     {% for s in plan.sightseeing_common %}
-    <div class="tp-card tp-attraction-card" data-category="{{ s.note }}">
+    <div class="tp-card tp-attraction-card" data-category="{{ s.note }}" data-spot-name="{{ s.name }}"
+         data-area="{{ s.area or '' }}" data-lat="{{ s.lat or '' }}" data-lon="{{ s.lon or '' }}">
       <span class="tp-cat-badge">{{ s.note }}</span>
       <h4>{{ s.name }}</h4>
       <div class="tp-area">{{ s.area }}</div>
@@ -537,7 +539,8 @@
   <div class="tp-section-head" style="margin-top:26px"><h2>💎 Hidden gems</h2><span class="tp-sub">Real places without a Wikipedia entry — genuinely less touristy</span></div>
   <div class="tp-attraction-grid" id="tp-hidden-spots">
     {% for s in plan.sightseeing_hidden[:12] %}
-    <div class="tp-card tp-attraction-card" data-category="{{ s.note }}">
+    <div class="tp-card tp-attraction-card" data-category="{{ s.note }}" data-spot-name="{{ s.name }}"
+         data-area="{{ s.area or '' }}" data-lat="{{ s.lat or '' }}" data-lon="{{ s.lon or '' }}">
       <span class="tp-cat-badge">{{ s.note }}</span>
       <h4>{{ s.name }}</h4>
       <div class="tp-area">{{ s.area }}</div>
@@ -557,10 +560,17 @@
 
 <!-- ============================== ITINERARY ============================== -->
 {% if plan.day_plan %}
-<section class="tp-section">
+<section class="tp-section" id="tp-itinerary">
   <div class="tp-section-head"><h2>📅 Day-by-day plan</h2>
-    <span class="tp-sub">Daily food {{ plan.daily_food_budget_usd | money }} · daily transport {{ plan.daily_transport_budget_usd | money }}</span></div>
-  <div class="tp-day-grid">
+    <span class="tp-sub" id="tp-itin-sub">Suggested from the real spots found. Use “+ Add” on the places above and this plan is rebuilt around the ones you choose.</span></div>
+  <script type="application/json" id="tp-itin-data">{{ {
+      'days': plan.day_plan | length,
+      'per_day': plan.spots_per_day or 2,
+      'mode': plan.transport_mode or 'flight',
+      'dinners': plan.day_plan | map(attribute='evening') | list,
+      'breakfasts': plan.day_plan | map(attribute='morning') | list,
+    } | tojson }}</script>
+  <div class="tp-day-grid" id="tp-day-grid">
     {% for d in plan.day_plan %}
     <div class="tp-card tp-day-card">
       <div class="tp-day-num">Day {{ d.day }}</div>
@@ -570,7 +580,6 @@
         <li><b>Evening</b>{{ d.evening }}</li>
       </ul>
       {% if d.food_pick %}<p class="muted" style="font-size:12px;margin-top:8px">{{ d.food_pick.note }}</p>{% endif %}
-      <span class="tp-day-spend">~{{ d.suggested_spend_usd | money }} sightseeing</span>
     </div>
     {% endfor %}
   </div>
@@ -696,6 +705,7 @@
     var fee = el.closest('.tp-attraction-card') && el.closest('.tp-attraction-card').querySelector('.tp-fee');
     if (fee) fee.hidden = !el.classList.contains('on');
     if (window.tpRecalc) window.tpRecalc();
+    if (window.tpBuildItinerary) window.tpBuildItinerary();
     try {
       var key = 'tp_itinerary_adds';
       var list = JSON.parse(sessionStorage.getItem(key) || '[]');
@@ -799,6 +809,114 @@
       if (e.target.closest && e.target.closest('.tp-fee')) window.tpRecalc();
     });
     window.tpRecalc();
+  }
+
+  // ---- day-by-day plan built from the spots the traveller added ----
+  // Order: nearest-neighbour from the chosen hotel (or the first spot), using the
+  // real coordinates on each card, so consecutive stops are close together; then
+  // the route is cut into the trip's full days. Day 1 (arrival) and the last day
+  // (departure) only take spots when there are no full days. Distances are
+  // straight-line (great-circle) km between stops, labelled as such.
+  var itinData = document.getElementById('tp-itin-data');
+  var dayGrid = document.getElementById('tp-day-grid');
+  if (itinData && dayGrid) {
+    var IT = JSON.parse(itinData.textContent);
+    var originalPlan = dayGrid.cloneNode(true);
+    var sub = document.getElementById('tp-itin-sub');
+    var subOriginal = sub ? sub.textContent : '';
+    var mk2 = function (tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+    var km = function (a, b) {
+      var R = 6371, toR = Math.PI / 180;
+      var dLat = (b.lat - a.lat) * toR, dLon = (b.lon - a.lon) * toR;
+      var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(a.lat * toR) * Math.cos(b.lat * toR) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      return 2 * R * Math.asin(Math.sqrt(h));
+    };
+    var order = function (spots, start) {
+      var withPos = spots.filter(function (s) { return !isNaN(s.lat) && !isNaN(s.lon); });
+      var noPos = spots.filter(function (s) { return isNaN(s.lat) || isNaN(s.lon); });
+      var route = [], cur = start || withPos[0];
+      var left = withPos.slice();
+      while (left.length) {
+        var best = 0, bestD = Infinity;
+        left.forEach(function (s, i) { var d = km(cur, s); if (d < bestD) { bestD = d; best = i; } });
+        cur = left.splice(best, 1)[0];
+        route.push(cur);
+      }
+      return route.concat(noPos);
+    };
+    var arrival = IT.mode === 'car' ? 'Arrive by car, check in' : (IT.mode === 'flight' ? 'Arrive, transfer to hotel, check in' : 'Arrive, check in');
+    var departure = IT.mode === 'car' ? 'Set off on the drive home' : (IT.mode === 'flight' ? 'Transfer to airport for return flight' : 'Head home');
+
+    window.tpBuildItinerary = function () {
+      var cards = Array.prototype.slice.call(document.querySelectorAll('.tp-attraction-card[data-spot-name]'))
+        .filter(function (c) { var b = c.querySelector('.tp-add-btn'); return b && b.classList.contains('on'); });
+      if (!cards.length) {
+        dayGrid.replaceWith(originalPlan.cloneNode(true));
+        dayGrid = document.getElementById('tp-day-grid');
+        if (sub) sub.textContent = subOriginal;
+        return;
+      }
+      var spots = cards.map(function (c) {
+        var fee = c.querySelector('.tp-fee input');
+        return {name: c.dataset.spotName, area: c.dataset.area, lat: parseFloat(c.dataset.lat), lon: parseFloat(c.dataset.lon),
+                fee: fee && fee.value !== '' ? parseFloat(fee.value) : null};
+      });
+      var hotelR = document.querySelector('input[name="tp-pick-hotel"]:checked');
+      var hotel = hotelR && hotelR.dataset.lat ? {name: hotelR.dataset.label, lat: parseFloat(hotelR.dataset.lat), lon: parseFloat(hotelR.dataset.lon)} : null;
+      if (hotel && (isNaN(hotel.lat) || isNaN(hotel.lon))) hotel = null;
+      var route = order(spots, hotel);
+
+      var days = IT.days, full = [];
+      for (var d = 2; d < days; d++) full.push(d);
+      var slots = full.length ? full : (days >= 2 ? [1, days] : [1]);
+      var per = Math.ceil(route.length / slots.length);
+      var buckets = {};
+      slots.forEach(function (d, i) { buckets[d] = route.slice(i * per, (i + 1) * per); });
+
+      var grid = mk2('div', 'tp-day-grid'); grid.id = 'tp-day-grid';
+      var sym = (document.getElementById('tp-cost-data') && JSON.parse(document.getElementById('tp-cost-data').textContent).currency.symbol) || '';
+      for (var day = 1; day <= days; day++) {
+        var card = mk2('div', 'tp-card tp-day-card');
+        card.appendChild(mk2('div', 'tp-day-num', 'Day ' + day));
+        var ul = mk2('ul', 'tp-day-stops');
+        var stops = buckets[day] || [];
+        if (day === 1) ul.appendChild(liLine('Arrive', arrival));
+        if (day === days && days > 1 && !stops.length) ul.appendChild(liLine('Morning', IT.breakfasts[days - 1] || 'Breakfast, pack'));
+        var prev = (day === 1 || !hotel) ? (day === 1 ? hotel : hotel) : hotel, dayKm = 0;
+        stops.forEach(function (s, i) {
+          var when = stops.length === 1 ? 'Visit' : (i < Math.ceil(stops.length / 2) ? 'Morning' : 'Afternoon');
+          var li = mk2('li');
+          li.appendChild(mk2('b', null, when));
+          li.appendChild(document.createTextNode(s.name + (s.area ? ' (' + s.area + ')' : '')));
+          var meta = [];
+          if (prev && !isNaN(s.lat)) { var k = km(prev, s); dayKm += k; meta.push((i === 0 && prev === hotel ? 'from hotel ' : '') + k.toFixed(1) + ' km'); }
+          if (s.fee !== null) meta.push('entry ' + sym + s.fee + ' pp');
+          if (meta.length) li.appendChild(mk2('span', 'tp-stop-meta', ' · ' + meta.join(' · ')));
+          ul.appendChild(li);
+          if (!isNaN(s.lat)) prev = s;
+        });
+        if (day > 1 && day < days && !stops.length) ul.appendChild(liLine('Free day', 'Explore nearby, or add more places above'));
+        if (day === days && days > 1) ul.appendChild(liLine('Depart', departure));
+        else ul.appendChild(liLine('Evening', IT.dinners[day - 1] || 'Dinner nearby'));
+        card.appendChild(ul);
+        if (stops.length) card.appendChild(mk2('span', 'tp-day-spend',
+          stops.length + ' place' + (stops.length === 1 ? '' : 's') + (dayKm ? ' · ~' + dayKm.toFixed(1) + ' km between stops (straight line)' : '')));
+        grid.appendChild(card);
+      }
+      dayGrid.replaceWith(grid);
+      dayGrid = grid;
+      if (sub) sub.textContent = 'Built from the ' + route.length + ' place' + (route.length === 1 ? '' : 's') + ' you added, ordered by distance' +
+        (hotel ? ' starting from ' + hotel.name : '') + '. Remove all to see the suggested plan again.';
+    };
+    function liLine(label, text) { var li = mk2('li'); li.appendChild(mk2('b', null, label)); li.appendChild(document.createTextNode(text)); return li; }
+
+    document.addEventListener('change', function (e) {
+      if (e.target.matches('input[name="tp-pick-hotel"]')) window.tpBuildItinerary();
+    });
+    document.addEventListener('input', function (e) {
+      if (e.target.closest && e.target.closest('.tp-fee')) window.tpBuildItinerary();
+    });
   }
 
   // ---- booking redirect confirmation - shared by flight (booking.py's real
