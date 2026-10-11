@@ -6,6 +6,7 @@ whether a route is even in the dataset before answering, rather than
 guessing. Requires an LLM key (see llm_utils.py / .env.example); with none
 configured it returns a plain explanation instead of crashing.
 """
+import contextvars
 import re
 import time
 import os
@@ -25,6 +26,19 @@ from predict_delay_v2 import predict_delay_probability, risk_label
 from reference_data import carrier_label
 from sightseeing import get_real_sightseeing
 from itinerary_optimizer import optimize_itinerary
+import currency as currency_utils
+
+# The traveller's display currency for this request. Tools take amounts in it and
+# return amounts written in it; the data underneath stays in USD (src/currency.py).
+_CUR = contextvars.ContextVar("chat_currency", default=currency_utils.DEFAULT_CURRENCY)
+
+
+def _fmt(usd: float) -> str:
+    return currency_utils.format_money(usd, _CUR.get())
+
+
+def _usd(amount: float) -> float:
+    return currency_utils.to_usd(amount, _CUR.get())
 
 _DEFAULT_WEATHER = {"temp_f": 55, "precip_in": 0.0, "pressure": 29.9, "visibility": 10.0, "wind_speed": 8}
 
@@ -32,9 +46,9 @@ SYSTEM_PROMPT = (
     "You are the SmartRouteAI travel assistant, embedded as a sidebar chatbot. "
     "You help with two things: checking flight delay risk, and planning a trip within a budget. "
     "The underlying dataset is US domestic flights from 2019 plus real India domestic flights "
-    "(BLR/BOM/CCU/DEL/HYD, 2019-2020) - no international/cross-border routes, no real-time fares, "
-    "no named hotels or points of interest (only hotel price TIERS and generic sightseeing "
-    "budgeting). Always call check_route_coverage before quoting flight data for a route, and "
+    "(BLR/BOM/CCU/DEL/HYD, 2019-2020) - no international/cross-border routes in the delay model. "
+    "Real named hotels with live nightly rates come from find_hotels, which needs a city - ask "
+    "for the city before suggesting hotels. Always call check_route_coverage before quoting flight data for a route, and "
     "tell the user plainly when a route/country isn't covered instead of guessing. Never invent "
     "a flight, price, hotel name, or attraction that a tool didn't return. Keep answers short and "
     "concrete. If check_route_coverage says a route isn't covered, still call find_reference_flights "
@@ -236,17 +250,43 @@ def find_reference_flights(origin_airport: str, destination_airport: str) -> str
 
 
 @tool
-def find_hotels(nightly_budget: float, priority: str = "cost") -> str:
-    """Find hotel price tiers (not named properties - the dataset has no hotel names) within a
-    nightly budget. priority is 'cost', 'time' (reliability), or 'comfort'."""
-    options = search_hotel_options(nightly_budget, priority=priority, top_n=3)
-    if not options:
-        return "No hotel tier matched that nightly budget."
-    return "\n".join(
-        f"{h['hotel_type']} · room {h['room_type']} · ~${h['median_nightly_rate_usd']}/night · "
-        f"{h['cancellation_rate']:.0%} historical cancellation rate"
-        for h in options
-    )
+def find_hotels(nightly_budget: float, city: str = "", check_in: str = "", nights: int = 1) -> str:
+    """Find REAL named hotels in a city at or under a nightly budget (per room, in the USER'S
+    currency), cheapest first, from live Google Hotels rates. city is required for real
+    hotels - ask the user for it if they haven't said. check_in is YYYY-MM-DD (defaults to
+    7 days from today); nights defaults to 1."""
+    from datetime import date, timedelta
+    from serpapi_prices import real_hotel_prices
+    if not (city or "").strip():
+        return ("Real hotel rates need a city. Ask the user which city they want to stay in - "
+                "don't suggest hotels without one.")
+    try:
+        start = date.fromisoformat(check_in) if check_in else date.today() + timedelta(days=7)
+    except ValueError:
+        start = date.today() + timedelta(days=7)
+    end = start + timedelta(days=max(int(nights or 1), 1))
+    cap_usd = _usd(nightly_budget)
+    fitting = real_hotel_prices(city, start.isoformat(), end.isoformat(), adults=2, limit=6,
+                                cheapest_first=True, max_price_usd=max(int(cap_usd), 1))
+    fitting = [h for h in fitting if h["nightly_rate_usd"] <= cap_usd + 1e-9]
+    if fitting:
+        lines = [f"Real hotels in {city} at or under {_fmt(cap_usd)}/night (Google Hotels, "
+                 f"{start.isoformat()} for {(end - start).days} night(s), 2 adults per room, cheapest first):"]
+        lines += [f"- {h['name']}: {_fmt(h['nightly_rate_usd'])}/night"
+                  + (f", rating {h['rating']}" if h.get("rating") else "") for h in fitting]
+        return "\n".join(lines)
+    # A looser price filter surfaces the cheap end of the market; an unfiltered
+    # search only returns Google's most relevant page, which can miss it.
+    cheapest = (real_hotel_prices(city, start.isoformat(), end.isoformat(), adults=2, limit=3,
+                                  cheapest_first=True, max_price_usd=max(int(cap_usd * 5), 15))
+                or real_hotel_prices(city, start.isoformat(), end.isoformat(), adults=2, limit=3,
+                                     cheapest_first=True))
+    if not cheapest:
+        return f"No live hotel rates could be retrieved for {city} right now."
+    return (f"NO hotel in {city} was found at or under {_fmt(cap_usd)}/night for {start.isoformat()}. "
+            f"The cheapest real options are: "
+            + "; ".join(f"{h['name']} {_fmt(h['nightly_rate_usd'])}/night" for h in cheapest)
+            + ". Tell the user plainly that their budget is below these; do not call these within budget.")
 
 
 def _format_optimizer_result(result: dict, priority: str) -> str:
@@ -254,11 +294,11 @@ def _format_optimizer_result(result: dict, priority: str) -> str:
         cheapest = result.get("cheapest_hotel")
         return (f"NOT FEASIBLE at priority={priority}: even the cheapest real hotel tier "
                 f"({cheapest['hotel_type'] + ' ' + cheapest['room_type'] if cheapest else 'n/a'}) "
-                f"leaves a real shortfall of ${result['shortfall_usd']:.2f} against this budget.")
+                f"leaves a real shortfall of {_fmt(result['shortfall_usd'])} against this budget.")
     b, hotel = result["budget_breakdown"], result["hotel_options"][0]
     lines = [f"priority={priority}: checked {result['combinations_considered']} real flight x hotel combinations."]
-    lines.append(f"Hotel: {hotel['hotel_type']} room {hotel['room_type']}, ~${hotel['median_nightly_rate_usd']}/night, "
-                 f"{hotel['reliability_pct']}% historical reliability - real total ${b['hotel_cost']:.2f}.")
+    lines.append(f"Hotel: {hotel['hotel_type']} room {hotel['room_type']}, ~{_fmt(hotel['median_nightly_rate_usd'])}/night, "
+                 f"{hotel['reliability_pct']}% historical reliability - real total {_fmt(b['hotel_cost'])}.")
     for label, legs in (("Outbound", result["outbound_flights"]), ("Return", result["return_flights"])):
         if legs and legs[0].get("delay_probability") is not None:
             f = legs[0]
@@ -267,8 +307,8 @@ def _format_optimizer_result(result: dict, priority: str) -> str:
             lines.append(f"{label}: reference schedule only ({carrier_label(legs[0]['carrier'])}), no real delay-risk data.")
         else:
             lines.append(f"{label}: no real or reference flight data for this leg.")
-    lines.append(f"Budget: flight ${b['flight_cost']:.2f}, hotel ${b['hotel_cost']:.2f}, food ${b['food_cost']:.2f}, "
-                 f"transport ${b['transport_cost']:.2f}, sightseeing ${b['sightseeing_cost']:.2f} (total ${b['total']:.2f}).")
+    lines.append(f"Budget split: flight {_fmt(b['flight_cost'])}, hotel {_fmt(b['hotel_cost'])}, food {_fmt(b['food_cost'])}, "
+                 f"transport {_fmt(b['transport_cost'])}, sightseeing {_fmt(b['sightseeing_cost'])} (total {_fmt(b['total'])}).")
     return "\n".join(lines)
 
 
@@ -281,7 +321,7 @@ def optimize_trip_budget(origin_airport: str, destination_airport: str, total_bu
     actual total budget and returns the best-scoring real combination, or an honest shortfall if
     nothing fits. Use compare_trip_priorities instead if the user's preferences are mixed or
     unclear (e.g. wants both cheap AND comfortable)."""
-    result = optimize_itinerary(origin_airport, destination_airport, total_budget, days,
+    result = optimize_itinerary(origin_airport, destination_airport, _usd(total_budget), days,
                                  start_weekday, return_weekday, priority=priority)
     return _format_optimizer_result(result, priority)
 
@@ -296,7 +336,7 @@ def compare_trip_priorities(origin_airport: str, destination_airport: str, total
     guessing which single priority best matches what they said."""
     sections = []
     for p in ("cost", "time", "comfort"):
-        result = optimize_itinerary(origin_airport, destination_airport, total_budget, days,
+        result = optimize_itinerary(origin_airport, destination_airport, _usd(total_budget), days,
                                      start_weekday, return_weekday, priority=p)
         sections.append(_format_optimizer_result(result, p))
     return "\n\n".join(sections)
@@ -365,8 +405,12 @@ def _get_agent():
     return _AGENT
 
 
-def run_chat(history: list[dict], message: str) -> str:
-    """history: list of {"role": "user"|"assistant", "content": str}. Returns the reply text."""
+def run_chat(history: list[dict], message: str, currency: str | None = None) -> str:
+    """history: list of {"role": "user"|"assistant", "content": str}. Returns the reply text.
+    currency: the traveller's display currency (e.g. "INR"); budgets are asked for and
+    amounts quoted in it, and tool arguments are taken in it."""
+    code = currency if currency in currency_utils.SUPPORTED_CURRENCIES else currency_utils.DEFAULT_CURRENCY
+    _CUR.set(code)
     agent = _get_agent()
     if agent is None:
         return (
@@ -375,7 +419,12 @@ def run_chat(history: list[dict], message: str) -> str:
             "the app - see .env.example."
         )
 
-    messages = [SystemMessage(content=SYSTEM_PROMPT)]
+    info = currency_utils.SUPPORTED_CURRENCIES[code]
+    messages = [SystemMessage(content=SYSTEM_PROMPT + (
+        f" The user's currency is {code} ({info['symbol']}, {info['name']}). Ask for budgets in {code}, "
+        f"pass amounts to tools in {code} exactly as the user gave them (tools convert internally), and "
+        f"quote every amount in {code} exactly as the tools write it. Never ask for, convert to, or quote "
+        f"US dollars unless the user's currency is USD."))]
     # Every call in the agent loop resends this history, so it is the cheapest
     # place to save tokens: the last 6 turns, long replies clipped.
     for turn in history[-6:]:

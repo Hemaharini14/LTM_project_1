@@ -1060,9 +1060,14 @@ def budget_trip():
                                        cheapest_first=stay != "luxury",
                                        max_price_usd=int(cap) if cap and cap >= 1 else None)
             if not hotels:   # nothing at that price: show the cheapest that exist, flagged as over
-                hotels = real_hotel_prices(city, inputs["start_date"], inputs["return_date"],
-                                           adults=min(inputs["travelers"], 2), limit=8,
-                                           cheapest_first=True)
+                # A looser filter first - it surfaces the cheap end of the market, which an
+                # unfiltered search (Google's most relevant page) can miss entirely.
+                hotels = (real_hotel_prices(city, inputs["start_date"], inputs["return_date"],
+                                            adults=min(inputs["travelers"], 2), limit=8,
+                                            cheapest_first=True, max_price_usd=max(int((cap or 0) * 5), 15))
+                          or real_hotel_prices(city, inputs["start_date"], inputs["return_date"],
+                                               adults=min(inputs["travelers"], 2), limit=8,
+                                               cheapest_first=True))
             plan["real_priced_hotels"] = hotels
             plan["hotel_room_night_cap_usd"] = cap
         except Exception as e:
@@ -1532,7 +1537,8 @@ def api_chat():
 
     history_key = "chat_history"
     chat_history = session.get(history_key, [])
-    reply = run_chat(chat_history, message)
+    reply = run_chat(chat_history, message,
+                     currency=session.get("currency", currency_utils.DEFAULT_CURRENCY))
     chat_history.append({"role": "user", "content": message})
     chat_history.append({"role": "assistant", "content": reply})
     session[history_key] = chat_history[-20:]

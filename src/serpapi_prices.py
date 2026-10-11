@@ -245,7 +245,9 @@ def real_hotel_prices(city: str, check_in: str, check_out: str,
     if not body:
         return []
     out = []
-    for p in (body.get("properties") or [])[:limit]:
+    # Read the whole page, then sort and cut: Google's own "lowest price" order
+    # is not reliable (checked: it put a ₹2,225 room above an ₹870 one).
+    for p in (body.get("properties") or []):
         rate = p.get("rate_per_night") or {}
         total = p.get("total_rate") or {}
         if rate.get("extracted_lowest") is None:
@@ -265,7 +267,9 @@ def real_hotel_prices(city: str, check_in: str, check_out: str,
             "lon": (p.get("gps_coordinates") or {}).get("longitude"),
             "source": "serpapi_google_hotels",
         })
-    return out
+    if cheapest_first:
+        out.sort(key=lambda h: h["nightly_rate_usd"])
+    return out[:limit]
 
 
 if __name__ == "__main__":
