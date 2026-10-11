@@ -26,6 +26,7 @@ from predict_delay_v2 import predict_delay_probability, risk_label
 from reference_data import carrier_label
 from sightseeing import get_real_sightseeing
 from itinerary_optimizer import optimize_itinerary
+from delay_duration import estimate_delay_duration
 import currency as currency_utils
 
 # The traveller's display currency for this request. Tools take amounts in it and
@@ -123,6 +124,89 @@ def _typical_risk(carrier_code, origin_airport, destination_airport, weekday, mo
         origin_wind_speed=_DEFAULT_WEATHER["wind_speed"],
         scheduled_hour=scheduled_hour, is_holiday=is_holiday,
     )
+
+
+@tool
+def explain_delay_reasons(carrier_code: str, origin_airport: str, destination_airport: str,
+                          date: str, scheduled_hour: int, scheduled_elapsed_time: float = 0) -> str:
+    """WHY a specific flight may be delayed. Use this for any "why" question about delay.
+    date is YYYY-MM-DD, scheduled_hour 0-23 local. Re-scores the flight with the SAME model
+    that produced its probability, changing one condition at a time to a calm baseline, and
+    reports which conditions add the most risk - plus the real weather forecast at the
+    departure airport when the date is within 16 days."""
+    from datetime import datetime as _dt
+    from weather_live import airport_weather
+    from feature_engineering import is_holiday_date
+    if not is_route_covered(origin_airport, destination_airport):
+        return "This route isn't in the trained data, so the model can't say why it would be delayed."
+    try:
+        day = _dt.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        return "date must be YYYY-MM-DD."
+    hour = max(0, min(23, int(scheduled_hour)))
+    when = day.replace(hour=hour)
+    if not scheduled_elapsed_time:
+        alts = search_alternative_flights(origin_airport=origin_airport, destination_airport=destination_airport,
+                                          exclude_carrier="", weekday=day.weekday(), priority="time", top_n=1)
+        scheduled_elapsed_time = alts[0]["scheduled_elapsed_time"] if alts else 120
+    wx = airport_weather(origin_airport, when)
+    holiday = is_holiday_date(date)
+    calm = {"temp_f": 60.0, "precip_in": 0.0, "pressure": 29.92, "visibility": 10.0, "wind_speed": 8.0}
+
+    def score(hour_=hour, weekday_=day.weekday(), weather=None, holiday_=holiday):
+        w = weather or wx or _DEFAULT_WEATHER
+        return predict_delay_probability(
+            carrier_code=carrier_code, origin_airport=origin_airport, destination_airport=destination_airport,
+            weekday=weekday_, month=day.month, scheduled_elapsed_time=scheduled_elapsed_time,
+            origin_temp_f=w["temp_f"], origin_temp_known=bool(weather or wx),
+            origin_precip_in=w["precip_in"], origin_pressure=w["pressure"],
+            origin_visibility=w["visibility"], origin_wind_speed=w["wind_speed"],
+            scheduled_hour=hour_, is_holiday=holiday_)
+
+    base = score()
+    reasons = []
+    if hour != 10:
+        reasons.append((base - score(hour_=10),
+                        f"{'late' if hour >= 15 else 'early' if hour < 7 else 'midday'} departure at {hour:02d}:00 "
+                        f"(vs a 10:00 departure) - delays from earlier flights build up through the day at {origin_airport}"))
+    if wx:
+        bits = []
+        if wx["precip_in"] >= 0.01:
+            bits.append(f"rain ({wx['precip_in']:g} in/h)")
+        if wx["visibility"] < 6:
+            bits.append(f"low visibility ({wx['visibility']:g} mi)")
+        if wx["wind_speed"] >= 15:
+            bits.append(f"strong wind ({wx['wind_speed']:g} mph)")
+        desc = ", ".join(bits) or f"forecast conditions ({wx['temp_f']:g}°F, wind {wx['wind_speed']:g} mph)"
+        reasons.append((base - score(weather=calm), f"weather at {origin_airport} at departure: {desc}"))
+    names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    if day.weekday() != 1:
+        reasons.append((base - score(weekday_=1), f"flying on a {names[day.weekday()]} (vs a Tuesday)"))
+    if holiday:
+        reasons.append((base - score(holiday_=False), "public holiday travel"))
+
+    up = sorted([r for r in reasons if r[0] >= 0.015], key=lambda r: -r[0])[:3]
+    down = [r for r in reasons if r[0] <= -0.015]
+    lines = [f"Delay probability {base:.0%} ({risk_label(base)} risk)."]
+    if up:
+        lines.append("Reasons, largest first (points this condition adds to the probability, per the model):")
+        lines += [f"- {txt}: +{imp * 100:.0f} pts" for imp, txt in up]
+    else:
+        lines.append("No single condition adds much; the risk is mostly the usual level for this airline and route.")
+    explained = sum(imp for imp, _ in up)
+    if up and explained < base * 0.5:
+        lines.append(f"- Most of the risk (about {(base - explained) * 100:.0f} pts) is simply the normal delay level "
+                     f"for {carrier_code} on {origin_airport}-{destination_airport} - a busy route/airport, "
+                     f"not a special condition on this day.")
+    if down:
+        lines.append("Helping: " + "; ".join(f"{txt} ({imp * 100:.0f} pts)" for imp, txt in down))
+    if not wx:
+        lines.append("No weather forecast for that date (beyond 16 days or unknown airport), so weather isn't counted.")
+    hist = estimate_delay_duration(carrier_code, origin_airport, destination_airport, hour)
+    if hist and hist.get("top_cause") and hist.get("basis") != "overall":
+        lines.append(f"Route history (not specific to this flight): when delayed, mostly '{hist['top_cause']}', "
+                     f"typically ~{hist['median_min']} min.")
+    return "\n".join(lines)
 
 
 @tool
@@ -381,7 +465,18 @@ def find_food_and_sightseeing(city: str) -> str:
     return "\n".join(lines)
 
 
-_TOOLS = [check_route_coverage, check_flight_delay_risk,
+# How answers should read. Kept separate from SYSTEM_PROMPT (what the bot knows) so
+# the tone can be tuned without touching the grounding rules.
+STYLE_RULES = (
+    " ANSWER STYLE: Be brief and direct. Never mention tool or function names. "
+    "When the user asks WHY a flight may be delayed, call explain_delay_reasons and reply with ONLY "
+    "the reason: one short line with the probability, then 2-4 short bullets, each one plain-language "
+    "reason with its size in points (e.g. '- Late evening departure (9 PM): +18 pts'). No tables, no "
+    "hour-by-hour comparisons, no 'what you can do' section and no follow-up offers unless the user "
+    "asks for them. If the date or departure time is missing, ask for just that, in one line."
+)
+
+_TOOLS = [check_route_coverage, check_flight_delay_risk, explain_delay_reasons,
           compare_departure_times, compare_weekdays, compare_carriers_on_route, explain_weather_impact,
           find_flights, find_reference_flights,
           find_hotels, optimize_trip_budget, compare_trip_priorities,
@@ -420,7 +515,7 @@ def run_chat(history: list[dict], message: str, currency: str | None = None) -> 
         )
 
     info = currency_utils.SUPPORTED_CURRENCIES[code]
-    messages = [SystemMessage(content=SYSTEM_PROMPT + (
+    messages = [SystemMessage(content=SYSTEM_PROMPT + STYLE_RULES + (
         f" The user's currency is {code} ({info['symbol']}, {info['name']}). Ask for budgets in {code}, "
         f"pass amounts to tools in {code} exactly as the user gave them (tools convert internally), and "
         f"quote every amount in {code} exactly as the tools write it. Never ask for, convert to, or quote "
