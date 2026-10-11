@@ -79,31 +79,21 @@
         t.sample_size.toLocaleString() + ' historical delayed flights: ' + t.basis + '). Most common cause on this route historically: ' +
         (t.top_cause || 'not recorded') + '. This is route history, not a forecast or a reason for this flight.'));
     }
-    if (p.why && p.why.drivers && p.why.drivers.length) {
+    var rs = p.reasons || [];
+    if (rs.length) {
       if (detailed) {
-        box.appendChild(el('div', 'fs-why-title', 'Why this score'));
-        box.appendChild(el('div', 'fs-fine', p.why.summary));
-        var ul = el('ul', 'fs-why');
-        var top = p.why.drivers[0].impact || 1;
-        p.why.drivers.forEach(function (d) {
-          var li = el('li');
-          li.appendChild(el('span', null, d.factor + ' (' + d.value + ')'));
-          var b = el('span', 'fs-why-bar'); var f = el('i');
-          f.style.width = Math.max(4, Math.round(d.impact / top * 100)) + '%'; b.appendChild(f);
-          li.appendChild(b);
-          li.appendChild(el('span', 'fs-why-pts', '+' + Math.round(d.impact * 100)));
-          ul.appendChild(li);
-        });
+        box.appendChild(el('div', 'fs-why-title', 'Why'));
+        var ul = el('ul', 'fs-why-list');
+        rs.forEach(function (r) { ul.appendChild(el('li', null, r)); });
         box.appendChild(ul);
-        box.appendChild(el('div', 'fs-fine',
-          'Points show how much each condition adds to this flight\'s risk versus a calm baseline. ' +
-          'They describe this model\'s sensitivities, not physical causes.'));
       } else {
-        var names = p.why.drivers.slice(0, 2).map(function (d) { return d.factor.toLowerCase() + ' (' + d.value + ')'; });
-        box.appendChild(el('div', 'fs-fine', 'Main drivers: ' + names.join(', ') + '.'));
+        box.appendChild(el('div', 'fs-why-line', 'Why: ' + rs[0] + (rs.length > 1 ? '; ' + rs[1].charAt(0).toLowerCase() + rs[1].slice(1) : '') + '.'));
       }
-    } else if (detailed && p.why_note) {
-      box.appendChild(el('div', 'fs-fine', p.why_note));
+    } else if (p.reasons_summary) {
+      box.appendChild(el('div', 'fs-why-line', p.reasons_summary));
+    }
+    if (detailed && p.helping && p.helping.length) {
+      box.appendChild(el('div', 'fs-fine', 'In its favour: ' + p.helping.join('; ').toLowerCase() + '.'));
     }
     if (detailed) box.appendChild(el('div', 'fs-fine', 'Model: ' + p.model));
     return box;

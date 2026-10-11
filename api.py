@@ -630,6 +630,19 @@ def flight_delay():
                     origin_wind_speed=inputs["origin_wind_speed"],
                     scheduled_hour=inputs["scheduled_hour"],
                     is_holiday=inputs["is_holiday"])
+                # The same idea in plain words, from the same model that made `prob`.
+                try:
+                    from delay_reasons import delay_reasons
+                    wx = ({"temp_f": inputs["origin_temp_f"], "precip_in": inputs["origin_precip_in"],
+                           "pressure": inputs["origin_pressure"], "visibility": inputs["origin_visibility"],
+                           "wind_speed": inputs["origin_wind_speed"]} if inputs.get("weather_source") else None)
+                    result["reasons"] = delay_reasons(
+                        inputs["carrier_code"], inputs["origin_airport"], inputs["destination_airport"],
+                        inputs["weekday"], inputs["month"], inputs["scheduled_hour"],
+                        inputs["scheduled_elapsed_time"], weather=wx, is_holiday=inputs["is_holiday"],
+                        temp_known=inputs["origin_temp_known"])
+                except Exception as e:
+                    print(f"[api] delay reasons skipped: {e}")
                 db.save_flight_check(session["user_id"], inputs, prob, label)
                 session["last_flight_check"] = inputs
                 session["last_flight_risk"] = {"probability": prob, "label": label}

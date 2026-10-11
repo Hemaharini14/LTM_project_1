@@ -83,3 +83,6 @@
 .fs-why-bar { height: 6px; background: rgba(255,255,255,0.08); border-radius: 6px; overflow: hidden; }
 .fs-why-bar i { display: block; height: 100%; background: linear-gradient(90deg, #0e7490, #67e8f9); border-radius: 6px; }
 .fs-why-pts { text-align: right; color: var(--teal); font-weight: 600; }
+
+.fs-why-line { margin-top: 8px; font-size: 0.88rem; color: var(--ink); line-height: 1.45; }
+.fs-why-list { margin: 6px 0 0; padding-left: 18px; font-size: 0.9rem; line-height: 1.55; color: var(--ink); }

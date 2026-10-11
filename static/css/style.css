@@ -882,3 +882,9 @@ fieldset legend { color: var(--teal); }
   text-underline-offset: 2px;
 }
 .booking-alt:hover { color: var(--teal); }
+
+.delay-reasons { margin: 14px 0 6px; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--hairline);
+  background: rgba(255,255,255,0.03); }
+.delay-reasons h4 { margin: 0 0 6px; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--teal); }
+.delay-reasons ul { margin: 0; padding-left: 18px; line-height: 1.55; }
+.delay-reasons p { margin: 6px 0 0; }

@@ -151,8 +151,6 @@ def explain_delay_reasons(carrier_code: str, origin_airport: str, destination_ai
         scheduled_elapsed_time = alts[0]["scheduled_elapsed_time"] if alts else 120
     wx = airport_weather(origin_airport, when)
     holiday = is_holiday_date(date)
-    calm = {"temp_f": 60.0, "precip_in": 0.0, "pressure": 29.92, "visibility": 10.0, "wind_speed": 8.0}
-
     def score(hour_=hour, weekday_=day.weekday(), weather=None, holiday_=holiday):
         w = weather or wx or _DEFAULT_WEATHER
         return predict_delay_probability(
@@ -163,49 +161,19 @@ def explain_delay_reasons(carrier_code: str, origin_airport: str, destination_ai
             origin_visibility=w["visibility"], origin_wind_speed=w["wind_speed"],
             scheduled_hour=hour_, is_holiday=holiday_)
 
-    base = score()
-    reasons = []
-    if hour != 10:
-        reasons.append((base - score(hour_=10),
-                        f"{'late' if hour >= 15 else 'early' if hour < 7 else 'midday'} departure at {hour:02d}:00 "
-                        f"(vs a 10:00 departure) - delays from earlier flights build up through the day at {origin_airport}"))
-    if wx:
-        bits = []
-        if wx["precip_in"] >= 0.01:
-            bits.append(f"rain ({wx['precip_in']:g} in/h)")
-        if wx["visibility"] < 6:
-            bits.append(f"low visibility ({wx['visibility']:g} mi)")
-        if wx["wind_speed"] >= 15:
-            bits.append(f"strong wind ({wx['wind_speed']:g} mph)")
-        desc = ", ".join(bits) or f"forecast conditions ({wx['temp_f']:g}°F, wind {wx['wind_speed']:g} mph)"
-        reasons.append((base - score(weather=calm), f"weather at {origin_airport} at departure: {desc}"))
-    names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-    if day.weekday() != 1:
-        reasons.append((base - score(weekday_=1), f"flying on a {names[day.weekday()]} (vs a Tuesday)"))
-    if holiday:
-        reasons.append((base - score(holiday_=False), "public holiday travel"))
-
-    up = sorted([r for r in reasons if r[0] >= 0.015], key=lambda r: -r[0])[:3]
-    down = [r for r in reasons if r[0] <= -0.015]
-    lines = [f"Delay probability {base:.0%} ({risk_label(base)} risk)."]
-    if up:
-        lines.append("Reasons, largest first (points this condition adds to the probability, per the model):")
-        lines += [f"- {txt}: +{imp * 100:.0f} pts" for imp, txt in up]
+    from delay_reasons import delay_reasons
+    r = delay_reasons(carrier_code, origin_airport, destination_airport, day.weekday(), day.month,
+                      hour, scheduled_elapsed_time, weather=wx, is_holiday=holiday)
+    lines = [f"Delay probability {r['probability']:.0%} ({r['risk']} risk)."]
+    if r["reasons"]:
+        lines.append("Reasons:")
+        lines += [f"- {x}" for x in r["reasons"]]
     else:
-        lines.append("No single condition adds much; the risk is mostly the usual level for this airline and route.")
-    explained = sum(imp for imp, _ in up)
-    if up and explained < base * 0.5:
-        lines.append(f"- Most of the risk (about {(base - explained) * 100:.0f} pts) is simply the normal delay level "
-                     f"for {carrier_code} on {origin_airport}-{destination_airport} - a busy route/airport, "
-                     f"not a special condition on this day.")
-    if down:
-        lines.append("Helping: " + "; ".join(f"{txt} ({imp * 100:.0f} pts)" for imp, txt in down))
+        lines.append(r["summary"])
+    if r["helping"]:
+        lines.append("In its favour: " + "; ".join(r["helping"]))
     if not wx:
-        lines.append("No weather forecast for that date (beyond 16 days or unknown airport), so weather isn't counted.")
-    hist = estimate_delay_duration(carrier_code, origin_airport, destination_airport, hour)
-    if hist and hist.get("top_cause") and hist.get("basis") != "overall":
-        lines.append(f"Route history (not specific to this flight): when delayed, mostly '{hist['top_cause']}', "
-                     f"typically ~{hist['median_min']} min.")
+        lines.append("(No weather forecast for that date, so weather isn't counted.)")
     return "\n".join(lines)
 
 
@@ -470,8 +438,9 @@ def find_food_and_sightseeing(city: str) -> str:
 STYLE_RULES = (
     " ANSWER STYLE: Be brief and direct. Never mention tool or function names. "
     "When the user asks WHY a flight may be delayed, call explain_delay_reasons and reply with ONLY "
-    "the reason: one short line with the probability, then 2-4 short bullets, each one plain-language "
-    "reason with its size in points (e.g. '- Late evening departure (9 PM): +18 pts'). No tables, no "
+    "the reason: one short line with the probability, then 1-3 short bullets, each a plain-language "
+    "reason such as '- Evening air-traffic congestion at Delhi'. Never show points, scores or any "
+    "number other than the probability itself. No tables, no "
     "hour-by-hour comparisons, no 'what you can do' section and no follow-up offers unless the user "
     "asks for them. If the date or departure time is missing, ask for just that, in one line."
 )
