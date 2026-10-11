@@ -6,6 +6,8 @@ whether a route is even in the dataset before answering, rather than
 guessing. Requires an LLM key (see llm_utils.py / .env.example); with none
 configured it returns a plain explanation instead of crashing.
 """
+import re
+import time
 import os
 import sys
 
@@ -351,7 +353,11 @@ def _get_agent():
     global _AGENT
     if _AGENT is not None:
         return _AGENT
-    llm = get_llm()
+    # Longer timeout and SDK-level retries: a free Groq key allows ~8,000 tokens a
+    # MINUTE and one agent turn makes several calls of ~2,500 tokens each, so a 429
+    # is routine. The OpenAI client honours the server's Retry-After on 429, which
+    # turns "rate limit reached" into a few seconds' wait instead of an error.
+    llm = get_llm(timeout=45, max_retries=3)
     if llm is None:
         return None
     from langgraph.prebuilt import create_react_agent
@@ -370,14 +376,49 @@ def run_chat(history: list[dict], message: str) -> str:
         )
 
     messages = [SystemMessage(content=SYSTEM_PROMPT)]
-    for turn in history[-10:]:
+    # Every call in the agent loop resends this history, so it is the cheapest
+    # place to save tokens: the last 6 turns, long replies clipped.
+    for turn in history[-6:]:
         cls = HumanMessage if turn.get("role") == "user" else AIMessage
-        messages.append(cls(content=turn.get("content", "")))
+        text = turn.get("content", "") or ""
+        messages.append(cls(content=text if len(text) <= 700 else text[:700] + " …"))
     messages.append(HumanMessage(content=message))
 
-    try:
-        result = agent.invoke({"messages": messages})
-        final = result["messages"][-1]
-        return final.content
-    except Exception as e:
-        return f"Sorry, the assistant hit an error: {e}"
+    for attempt in (1, 2):
+        try:
+            result = agent.invoke({"messages": messages}, config={"recursion_limit": 12})
+            final = result["messages"][-1]
+            return final.content
+        except Exception as e:
+            wait = _rate_limit_wait(e)
+            if wait is not None and attempt == 1 and wait <= 30:
+                time.sleep(wait + 1)
+                continue
+            print(f"[chat_agent] {type(e).__name__}: {e}")
+            return _friendly_error(e, wait)
+    return _friendly_error(None, None)
+
+
+def _rate_limit_wait(e) -> float | None:
+    """Seconds the provider asked us to wait, if this is a rate-limit error."""
+    text = str(e)
+    if "429" not in text and "rate limit" not in text.lower() and "rate_limit" not in text:
+        return None
+    m = re.search(r"try again in ([\d.]+)\s*(ms|s)", text)
+    if not m:
+        return 10.0
+    v = float(m.group(1))
+    return v / 1000 if m.group(2) == "ms" else v
+
+
+def _friendly_error(e, wait) -> str:
+    """What the user sees - never the raw provider payload (it carries org IDs)."""
+    if wait is not None:
+        return ("I'm getting a lot of questions right now and the AI service asked me to slow "
+                "down (free-tier limit). Please wait about a minute and ask again.")
+    text = str(e or "")
+    if "401" in text or "invalid_api_key" in text or "Incorrect API key" in text:
+        return "The chatbot's AI key was rejected. Check the API key in the .env file."
+    if "timed out" in text.lower() or "timeout" in text.lower():
+        return "The AI service took too long to answer. Please try again."
+    return "Sorry, something went wrong while answering. Please try again in a moment."
