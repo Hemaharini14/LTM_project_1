@@ -223,16 +223,25 @@ def real_flight_price(origin_iata: str, destination_iata: str, outbound_date: st
 
 
 def real_hotel_prices(city: str, check_in: str, check_out: str,
-                      adults: int = 1, limit: int = 5) -> list[dict]:
+                      adults: int = 1, limit: int = 5, cheapest_first: bool = False,
+                      max_price_usd: int | None = None) -> list[dict]:
     """Real Google Hotels results near `city` for these real dates - price,
     rating, review count, star class and a real photo, when Google has them.
-    Empty list (never a guess) if the key/quota/lookup isn't available."""
+    Empty list (never a guess) if the key/quota/lookup isn't available.
+
+    cheapest_first sorts by lowest price (Google's sort_by=3) instead of relevance;
+    max_price_usd keeps only rooms at or under that nightly rate."""
     if not city:
         return []
-    body = _get("google_hotels", {
+    params = {
         "q": city, "check_in_date": check_in, "check_out_date": check_out,
         "adults": max(1, adults), "currency": "USD", "hl": "en", "gl": "us",
-    })
+    }
+    if cheapest_first:
+        params["sort_by"] = 3
+    if max_price_usd:
+        params["max_price"] = int(max_price_usd)
+    body = _get("google_hotels", params)
     if not body:
         return []
     out = []

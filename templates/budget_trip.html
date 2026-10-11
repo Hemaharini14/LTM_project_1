@@ -170,6 +170,16 @@
   <div class="tp-card tp-summary-chip"><div class="tp-label">Budget</div><div class="tp-value">{{ (plan.cost_breakdown.budget_usd if plan.cost_breakdown else plan.budget_breakdown.total) | money }}</div></div>
 </div>
 
+{% if plan.cost_breakdown and plan.cost_breakdown.fit and not plan.cost_breakdown.fit.possible %}
+{% set fit = plan.cost_breakdown.fit %}
+<div class="tp-budget-warn" style="margin:0 0 16px">
+  ⚠️ <strong>{{ plan.cost_breakdown.budget_usd | money }} can't cover this trip at today's real prices.</strong>
+  The cheapest possible version costs about <strong>{{ fit.minimum_usd | money }}</strong>:
+  cheapest flights {{ fit.min_flights_usd | money }} + cheapest hotel {{ fit.min_hotel_usd | money }}
+  + food &amp; local transport allowances. Raise the budget to at least that, travel fewer people or nights,
+  or pick “I'll arrange this leg myself” for a flight below.
+</div>
+{% endif %}
 {% if plan.route_reference %}
 <p class="dataset-note">Our historical flight data has no flights on this route for these weekdays, so the flight cards below are a reference schedule with no delay-risk score. Use Live Flights for a scored, real flight.</p>
 {% elif not plan.route_covered %}

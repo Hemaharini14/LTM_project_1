@@ -172,3 +172,38 @@ def test_trip_planner_carries_travellers_from_compare_to_plan(client):
     plan_forms = [f for f in forms if 'name="stage" value="plan"' in f]
     assert plan_forms, "the compare step should offer at least one transport mode"
     assert all('name="travelers" value="10"' in f for f in plan_forms)
+
+
+# ------------------------------------------------------------------ the plan respects the budget
+def test_hotel_pick_fits_what_the_budget_leaves(monkeypatch):
+    import api as appmod
+    plan = {"nights": 2, "rooms": 1, "travelers": 2,
+            "budget_breakdown": {"food_cost": 50.0, "transport_cost": 30.0},
+            "real_outbound_price": {"price_usd": 200.0, "airline": "X"},
+            "real_return_price": {"price_usd": 200.0, "airline": "X"},
+            "real_priced_hotels": [{"name": n, "nightly_rate_usd": r}
+                                   for n, r in (("A", 20.0), ("B", 60.0), ("C", 90.0), ("D", 400.0))]}
+    inputs = {"total_budget": 700.0, "travelers": 2, "days": 3, "stay_comfort": "luxury"}
+    with appmod.app.test_request_context():
+        appmod.session["currency"] = "USD"
+        cb = appmod._cost_breakdown(plan, inputs)
+    # 700 - 400 flights - 80 allowances = 220 left -> 110/room/night: C (90) is the best that fits, not D (400)
+    hotel = next(i for i in cb["items"] if i["label"] == "Hotel")
+    assert plan["default_hotel_name"] == "C" and hotel["usd"] == 180.0
+    assert cb["fit"]["possible"] and cb["fit"]["fits"]
+    assert sum(i["usd"] for i in cb["items"] if i["label"] != "Left over") <= 700.0
+
+
+def test_impossible_budget_reports_the_real_minimum():
+    import api as appmod
+    plan = {"nights": 2, "rooms": 1, "travelers": 1,
+            "budget_breakdown": {"food_cost": 5.0, "transport_cost": 3.0},
+            "real_outbound_price": {"price_usd": 120.0}, "real_return_price": {"price_usd": 110.0},
+            "real_priced_hotels": [{"name": "Cheap", "nightly_rate_usd": 4.0}]}
+    with appmod.app.test_request_context():
+        appmod.session["currency"] = "USD"
+        cb = appmod._cost_breakdown(plan, {"total_budget": 45.0, "travelers": 1, "days": 3,
+                                           "stay_comfort": "standard"})
+    assert cb["fit"]["possible"] is False
+    assert cb["fit"]["minimum_usd"] == 120 + 110 + 8 + 8
+    assert plan["default_hotel_name"] == "Cheap"

@@ -718,6 +718,29 @@ def flight_alternatives():
 
 # ---------------------------------------------------------------- budget trip planner
 
+def _fixed_allowances_usd(plan: dict, inputs: dict) -> float:
+    bb = plan.get("budget_breakdown") or {}
+    return (bb.get("food_cost") or 0.0) + (bb.get("transport_cost") or 0.0)
+
+
+def _cheapest_flights_usd(plan: dict) -> float | None:
+    legs = [plan.get("real_outbound_price"), plan.get("real_return_price")]
+    return sum(f["price_usd"] for f in legs if f) if any(legs) else None
+
+
+def _hotel_room_night_cap(plan: dict, inputs: dict) -> float | None:
+    """The most one room can cost per night and still keep the trip within budget,
+    after the cheapest flights and the food/transport allowances. None if no fare
+    is known (then the budget can't be split honestly); 0 if nothing is left."""
+    flights = _cheapest_flights_usd(plan)
+    if flights is None:
+        return None
+    nights = plan.get("nights") or 1
+    rooms = plan.get("rooms") or 1
+    left = inputs["total_budget"] - flights - _fixed_allowances_usd(plan, inputs)
+    return max(left, 0.0) / (nights * rooms)
+
+
 def _cost_breakdown(plan: dict, inputs: dict) -> dict:
     """Line-by-line cost of the trip, each line saying what KIND of number it is:
 
@@ -768,15 +791,25 @@ def _cost_breakdown(plan: dict, inputs: dict) -> dict:
     real = sorted(plan.get("real_priced_hotels") or [], key=lambda h: h["nightly_rate_usd"])
     stay = inputs.get("stay_comfort") or "standard"
     if real:
-        # Live rates for the actual destination, picked to match the stay-comfort
-        # level: cheapest for Budget, the middle option for Standard, the top for Luxury.
-        pick = real[0] if stay == "budget" else real[-1] if stay == "luxury" else real[len(real) // 2]
+        # Only hotels the budget can pay for are candidates (what is left per
+        # room-night after the cheapest flights and the allowances). Among those,
+        # the stay-comfort level picks: cheapest for Budget, middle for Standard,
+        # top for Luxury. If none fit, the cheapest is used and the plan says so.
+        cap = _hotel_room_night_cap(plan, inputs)
+        fitting = [h for h in real if cap is None or h["nightly_rate_usd"] <= cap + 1e-9]
+        pool = fitting or real[:1]
+        pick = pool[0] if stay == "budget" else pool[-1] if stay == "luxury" else pool[len(pool) // 2]
         plan["default_hotel_name"] = pick["name"]
         usd = round(pick["nightly_rate_usd"] * nights * rooms, 2)
-        which = {"budget": "cheapest", "luxury": "highest-priced"}.get(stay, "middle")
+        if fitting:
+            which = {"budget": "cheapest", "luxury": "best"}.get(stay, "middle")
+            why = (f"the {which} of {len(fitting)} live hotels that fit your budget"
+                   + (f" (up to {m(cap)}/room/night)" if cap is not None else ""))
+        else:
+            why = (f"the cheapest live hotel found - none fit your budget, which leaves "
+                   f"{m(cap or 0)}/room/night after flights and allowances")
         items.append({"label": "Hotel", "usd": usd, "kind": "real",
-                      "how": f"{pick['name']}: {m(pick['nightly_rate_usd'])}/night (Google Hotels, {which} of "
-                             f"{len(real)} live results for your dates, matching '{stay.title()}' stay) × {nights} "
+                      "how": f"{pick['name']}: {m(pick['nightly_rate_usd'])}/night ({why}; Google Hotels) × {nights} "
                              f"night{'s' if nights != 1 else ''} × {rooms} room{'s' if rooms != 1 else ''} (2 people per room)."})
     elif hotel and bb.get("hotel_cost"):
         items.append({"label": "Hotel", "usd": bb["hotel_cost"], "kind": "dataset",
@@ -796,12 +829,23 @@ def _cost_breakdown(plan: dict, inputs: dict) -> dict:
                              f"An allowance, not quoted prices."})
 
     spent = sum(i["usd"] for i in items)
-    left = round(total - spent, 2)
+    left = total - spent
     items.append({"label": "Sightseeing & extras", "usd": max(left, 0.0), "kind": "remaining",
                   "how": (f"What is left of your budget after the lines above, about "
                           f"{m(left / max(days * t, 1))} per person per day. It is not a cost estimate - "
                           f"spend it on entry tickets, activities or shopping.") if left >= 0 else
                          "Nothing is left: the lines above already exceed your budget."})
+    # The least this trip can cost with real prices: cheapest flights + cheapest
+    # hotel + the allowances. If that exceeds the budget, no choice of picks fits.
+    min_flights = _cheapest_flights_usd(plan)
+    min_hotel = (real[0]["nightly_rate_usd"] * nights * rooms) if real else None
+    minimum = None
+    if min_flights is not None and min_hotel is not None:
+        minimum = min_flights + min_hotel + _fixed_allowances_usd(plan, inputs)
+    fit = {"fits": left >= 0, "minimum_usd": minimum,
+           "possible": minimum is None or minimum <= total + 1e-6,
+           "min_flights_usd": min_flights, "min_hotel_usd": min_hotel}
+
     rates = currency_utils.get_rates()
     disp = cur if (cur == "USD" or cur in rates) else "USD"
     calc = {   # everything the page needs to re-price the trip as the traveller picks
@@ -813,7 +857,7 @@ def _cost_breakdown(plan: dict, inputs: dict) -> dict:
         "server_flight": next((i for i in items if i["label"] == "Flights"), None),
         "server_hotel": next((i for i in items if i["label"] == "Hotel"), None),
     }
-    return {"items": items, "calc": calc, "total_usd": spent + max(left, 0.0), "budget_usd": total,
+    return {"items": items, "calc": calc, "fit": fit, "total_usd": spent + max(left, 0.0), "budget_usd": total,
             "over_budget_usd": -left if left < 0 else 0.0}
 
 
@@ -936,10 +980,22 @@ def budget_trip():
         try:
             # Rates are per ROOM, so ask for the occupancy of one room (2 people, as
             # the room count assumes) - not the whole party in a single room.
-            plan["real_priced_hotels"] = real_hotel_prices(
-                inputs["destination_city"] or inputs["destination_place"],
-                inputs["start_date"], inputs["return_date"],
-                adults=min(inputs["travelers"], 2))
+            # The search is capped at what the budget leaves per room-night once the
+            # cheapest flights and the food/transport allowances are paid, and sorted
+            # cheapest first, so the hotels offered are ones the budget can pay for.
+            city = inputs["destination_city"] or inputs["destination_place"]
+            cap = _hotel_room_night_cap(plan, inputs)
+            stay = inputs.get("stay_comfort") or "standard"
+            hotels = real_hotel_prices(city, inputs["start_date"], inputs["return_date"],
+                                       adults=min(inputs["travelers"], 2), limit=8,
+                                       cheapest_first=stay != "luxury",
+                                       max_price_usd=int(cap) if cap and cap >= 1 else None)
+            if not hotels:   # nothing at that price: show the cheapest that exist, flagged as over
+                hotels = real_hotel_prices(city, inputs["start_date"], inputs["return_date"],
+                                           adults=min(inputs["travelers"], 2), limit=8,
+                                           cheapest_first=True)
+            plan["real_priced_hotels"] = hotels
+            plan["hotel_room_night_cap_usd"] = cap
         except Exception as e:
             print(f"[api] real hotel prices skipped: {e}")
             plan["real_priced_hotels"] = []
